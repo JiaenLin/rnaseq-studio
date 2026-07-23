@@ -114,19 +114,27 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   }, [counts.samples, bundle.samples, meta.conditions])
 
   const nGenes = counts.geneIds.length
-  // Descending expression ordering per sample (memoized per bundle; one sort/sample).
-  const orders = useMemo(() => computeSortedOrders(counts.values, nGenes, S), [counts, nGenes, S])
-  const rankPos = useMemo(() => computeRankPositions(orders, nGenes, S), [orders, nGenes, S])
+  // The full-genome sort is only needed for the rank-based methods AND only once
+  // gene sets exist — computing it eagerly on mount froze large datasets (78k genes).
+  const needScores = sets.length > 0 && scoreMethod !== 'meanz'
+  const orders = useMemo(() => needScores ? computeSortedOrders(counts.values, nGenes, S) : [],
+    [needScores, counts, nGenes, S])
+  const rankPos = useMemo(() => needScores && scoreMethod === 'meanrank' && orders.length
+    ? computeRankPositions(orders, nGenes, S) : new Float32Array(0),
+    [needScores, scoreMethod, orders, nGenes, S])
   const meanZ = (rows: number[]) => {
     const z = rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
     const m = new Array(S).fill(0)
     if (z.length) for (let j = 0; j < S; j++) { let a = 0; for (const zr of z) a += zr[j]; m[j] = a / z.length }
     return m
   }
-  const scoreSet = (rows: number[]) =>
-    scoreMethod === 'runningsum' ? rankRunningSum(rows, orders, nGenes)
-      : scoreMethod === 'meanrank' ? meanRankScore(rows, rankPos, nGenes, S)
-        : meanZ(rows)
+  const scoreSet = (rows: number[]) => {
+    try {
+      return scoreMethod === 'runningsum' ? rankRunningSum(rows, orders, nGenes)
+        : scoreMethod === 'meanrank' ? meanRankScore(rows, rankPos, nGenes, S)
+          : meanZ(rows)
+    } catch { return new Array(S).fill(0) }
+  }
   const moduleBySet = useMemo(() => sets.map(s => ({ name: s.name, moduleByCol: scoreSet(s.rows) })),
     [sets, scoreMethod, orders, rankPos, counts, S, nGenes])
 

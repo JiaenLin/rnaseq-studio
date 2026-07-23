@@ -13,9 +13,10 @@
 export function computeSortedOrders(values: Float64Array, N: number, S: number): Int32Array[] {
   const orders: Int32Array[] = []
   for (let j = 0; j < S; j++) {
-    const idx = Array.from({ length: N }, (_, i) => i)
-    idx.sort((a, b) => values[b * S + j] - values[a * S + j]) // highest expression first
-    orders.push(Int32Array.from(idx))
+    const ord = new Int32Array(N)
+    for (let i = 0; i < N; i++) ord[i] = i
+    ord.sort((a, b) => values[b * S + j] - values[a * S + j]) // highest expression first
+    orders.push(ord)
   }
   return orders
 }

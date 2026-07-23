@@ -13,7 +13,7 @@ type Cat = 'up' | 'down' | 'ns'
 
 export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
   const rows = bundle.degByContrast[contrast.id] || []
-  const padjThr = contrast.padj_threshold ?? 0.05
+  const [padjThr, setPadjThr] = useState(contrast.padj_threshold ?? 0.05)
   const [lfcThr, setLfcThr] = useState(contrast.lfc_threshold ?? 1)
 
   const cats = useMemo(() => {
@@ -71,6 +71,13 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
         <span className="pill bg-red-100 text-red-700">▲ {nUp} up in {contrast.numerator}</span>
         <span className="pill bg-blue-100 text-blue-700">▼ {nDown} up in {contrast.denominator}</span>
         <label className="ml-auto flex items-center gap-2 text-slate-500">
+          padj ≤
+          <input type="range" min={0} max={0.25} step={0.005} value={Math.min(padjThr, 0.25)}
+            onChange={e => setPadjThr(+e.target.value)} />
+          <input type="number" className="input w-20 py-0.5" step={0.001} min={0} max={1} value={padjThr}
+            onChange={e => setPadjThr(clamp(+e.target.value, 0, 1))} />
+        </label>
+        <label className="flex items-center gap-2 text-slate-500">
           |log2FC| ≥
           <input type="range" min={0} max={3} step={0.25} value={lfcThr}
             onChange={e => setLfcThr(+e.target.value)} />
@@ -90,3 +97,5 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
     </div>
   )
 }
+
+const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
