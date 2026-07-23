@@ -81,6 +81,7 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
         data={traces}
         layout={layout}
         style={{ height: 520 }}
+        downloadName={`volcano_${contrast.id}`}
         onPointClick={p => p?.customdata && onSelectGene(p.customdata)}
       />
       <p className="mt-2 text-center text-xs text-slate-400">

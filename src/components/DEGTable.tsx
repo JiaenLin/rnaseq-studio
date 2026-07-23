@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Bundle, Contrast } from '../types'
+import type { Bundle, Contrast, DEGRow } from '../types'
+import { combinedScore } from '../lib/stats'
 
 interface Props {
   bundle: Bundle
@@ -7,8 +8,11 @@ interface Props {
   onSelectGene: (gene: string) => void
 }
 
-type SortKey = 'gene_name' | 'baseMean' | 'log2FoldChange' | 'pvalue' | 'padj'
+type SortKey = 'gene_name' | 'baseMean' | 'log2FoldChange' | 'combined' | 'pvalue' | 'padj'
 const MAX_ROWS = 500
+
+const cellVal = (r: DEGRow, k: SortKey): number | string | null =>
+  k === 'combined' ? combinedScore(r.log2FoldChange, r.pvalue) : (r as any)[k]
 
 export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
   const all = bundle.degByContrast[contrast.id] || []
@@ -26,7 +30,7 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
     if (sigOnly) rows = rows.filter(r => r.padj != null && r.padj < padjThr)
     const dir = asc ? 1 : -1
     const sorted = [...rows].sort((a, b) => {
-      const av = a[sort], bv = b[sort]
+      const av = cellVal(a, sort), bv = cellVal(b, sort)
       if (av == null) return 1
       if (bv == null) return -1
       if (typeof av === 'string') return dir * av.localeCompare(bv as string)
@@ -41,9 +45,10 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
   }
 
   const download = () => {
-    const header = ['gene_id', 'gene_name', 'baseMean', 'log2FoldChange', 'lfcSE', 'pvalue', 'padj']
+    const header = ['gene_id', 'gene_name', 'baseMean', 'log2FoldChange', 'lfcSE', 'pvalue', 'padj', 'combinedScore']
     const lines = [header.join(',')]
-    for (const r of filtered) lines.push(header.map(h => (r as any)[h] ?? '').join(','))
+    for (const r of filtered) lines.push(header.map(h =>
+      h === 'combinedScore' ? (combinedScore(r.log2FoldChange, r.pvalue) ?? '') : ((r as any)[h] ?? '')).join(','))
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -71,6 +76,7 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
               <Th label="Gene" k="gene_name" sort={sort} asc={asc} onClick={clickSort} />
               <Th label="Base mean" k="baseMean" sort={sort} asc={asc} onClick={clickSort} num />
               <Th label="log2FC" k="log2FoldChange" sort={sort} asc={asc} onClick={clickSort} num />
+              <Th label="Combined" k="combined" sort={sort} asc={asc} onClick={clickSort} num />
               <Th label="p-value" k="pvalue" sort={sort} asc={asc} onClick={clickSort} num />
               <Th label="padj" k="padj" sort={sort} asc={asc} onClick={clickSort} num />
             </tr>
@@ -88,6 +94,7 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
                 <td className={`px-3 py-1.5 text-right font-mono ${r.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>
                   {fmt(r.log2FoldChange, 2)}
                 </td>
+                <td className="px-3 py-1.5 text-right font-mono">{fmt(combinedScore(r.log2FoldChange, r.pvalue), 2)}</td>
                 <td className="px-3 py-1.5 text-right font-mono text-slate-500">{fmtP(r.pvalue)}</td>
                 <td className="px-3 py-1.5 text-right font-mono">{fmtP(r.padj)}</td>
               </tr>
@@ -99,6 +106,11 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
         <p className="mt-2 text-center text-xs text-slate-400">
           Showing top {MAX_ROWS} of {filtered.length.toLocaleString()} — refine the filter or download the full CSV.
         </p>}
+      <p className="mt-2 text-xs text-slate-400">
+        <b>Combined score</b> = −log10(p-value) × log2FC — a signed ranking metric (large positive = strongly
+        up-regulated &amp; significant; large negative = strongly down-regulated). Click any column header to sort;
+        click again to reverse.
+      </p>
     </div>
   )
 }

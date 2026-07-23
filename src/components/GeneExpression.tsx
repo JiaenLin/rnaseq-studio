@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import { conditionColors, SIG_COLORS } from '../lib/palette'
-import { mean, zscore } from '../lib/stats'
+import { combinedScore, mean, welchP, zscore } from '../lib/stats'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -140,7 +140,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
         {input}
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
           <div className="card p-4">
-            <Plot data={traces} layout={{
+            <Plot data={traces} downloadName={`expr_${g.name}`} layout={{
               margin: { t: 10, r: 10, b: 40, l: 56 }, showlegend: false,
               yaxis: { title: log2 ? 'log2(normalized + 1)' : 'normalized counts', zeroline: false },
               paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
@@ -185,6 +185,20 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     return <div>{input}<div className="card p-16 text-center text-sm text-slate-400">Enter a gene, or a comma-separated list of genes.</div></div>
   }
 
+  // module / signature score over ALL matched genes (mean of per-gene z-scores)
+  const zAll = matched.map(g => zscore(geneVals(g.row).map(v => Math.log2(v + 1))))
+  const moduleByCol = new Array(S).fill(0)
+  if (zAll.length) for (let j = 0; j < S; j++) { let s = 0; for (const z of zAll) s += z[j]; moduleByCol[j] = s / zAll.length }
+  const moduleByCond: Record<string, number[]> = {}
+  ordered.forEach(o => { (moduleByCond[o.cond] ||= []).push(moduleByCol[o.col]) })
+  const denScores = moduleByCond[contrast.denominator] || []
+  const numScores = moduleByCond[contrast.numerator] || []
+  const moduleStat = denScores.length >= 2 && numScores.length >= 2 ? welchP(denScores, numScores) : null
+  const moduleTraces = meta.conditions.filter(c => moduleByCond[c]?.length).map(c => ({
+    type: 'box', name: c, y: moduleByCond[c], boxpoints: 'all', jitter: 0.5, pointpos: 0, boxmean: true,
+    marker: { color: colors[c], size: 7 }, line: { color: colors[c] }, fillcolor: colors[c] + '22',
+  }))
+
   const shown = matched.slice(0, MAX_HEATMAP)
   const zByGene = shown.map(g => zscore(geneVals(g.row).map(v => Math.log2(v + 1))))
   const heatTrace = [{
@@ -221,10 +235,29 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
       {input}
       <div className="space-y-4">
         <div className="card p-4">
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Module score (mean z of {matched.length} genes)</h3>
+            {moduleStat && (
+              <span className="text-sm text-slate-500">
+                {contrast.numerator} vs {contrast.denominator}: Δ {moduleStat.diff.toFixed(2)} · t {moduleStat.t.toFixed(2)} · p {fmtP(moduleStat.p)}
+              </span>
+            )}
+          </div>
+          <Plot data={moduleTraces} downloadName={`module_score_${contrast.id}`} layout={{
+            margin: { t: 8, r: 10, b: 36, l: 52 }, showlegend: false,
+            yaxis: { title: 'module score', zeroline: true },
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
+          }} style={{ height: 300 }} />
+          <p className="mt-1 text-xs text-slate-400">
+            Module score = for each sample, the mean across these genes of the gene's z-score (log2 normalized expression, standardized across samples). Dashed line = group mean.
+          </p>
+        </div>
+
+        <div className="card p-4">
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
             Per-gene expression — z-scored across samples{matched.length > MAX_HEATMAP ? ` (top ${MAX_HEATMAP})` : ''}
           </h3>
-          <Plot data={heatTrace} layout={{
+          <Plot data={heatTrace} downloadName={`heatmap_${contrast.id}`} layout={{
             margin: { t: 8, r: 10, b: 70, l: 90 }, height: Math.max(220, shown.length * 16 + 120),
             xaxis: { tickangle: -45, automargin: true }, yaxis: { automargin: true, tickfont: { size: 10 } },
             paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
@@ -237,6 +270,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
           </h3>
           <Plot
             data={barTrace}
+            downloadName={`per_gene_log2FC_${contrast.id}`}
             layout={{
               margin: { t: 8, r: 10, b: 40, l: 90 }, height: Math.max(200, barGenes.length * 22 + 80),
               xaxis: { title: 'log2 fold change', zeroline: true },
@@ -256,16 +290,19 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
                 <tr><th className="px-3 py-2">Gene</th><th className="px-3 py-2 text-right">log2FC</th>
+                  <th className="px-3 py-2 text-right">combined</th>
                   <th className="px-3 py-2 text-right">padj</th><th className="px-3 py-2">significance</th></tr>
               </thead>
               <tbody>
                 {matched.map(g => {
                   const d = degMap.get(g.id.toUpperCase())
+                  const comb = d ? combinedScore(d.log2FoldChange, d.pvalue) : null
                   return (
                     <tr key={g.id} className="cursor-pointer border-t border-slate-100 hover:bg-indigo-50/60 dark:border-slate-800 dark:hover:bg-slate-800"
                       onClick={() => onSelectGene(g.name)}>
                       <td className="px-3 py-1.5 font-medium">{g.name}</td>
                       <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>{d ? d.log2FoldChange.toFixed(2) : '—'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{comb != null ? comb.toFixed(2) : '—'}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
                       <td className="px-3 py-1.5">{sig(d, contrast, true)}</td>
                     </tr>
@@ -274,6 +311,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
               </tbody>
             </table>
           </div>
+          <p className="mt-2 text-xs text-slate-400"><b>Combined score</b> = −log10(p-value) × log2FC.</p>
         </div>
       </div>
     </div>

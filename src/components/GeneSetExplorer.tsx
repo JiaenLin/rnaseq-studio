@@ -129,7 +129,7 @@ export default function GeneSetExplorer({ bundle, contrast }: Props) {
         <>
           <div className="card p-4">
             <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Set activity by condition</h3>
-            <Plot data={boxTraces} layout={{
+            <Plot data={boxTraces} downloadName={`set_activity_${contrast.id}`} layout={{
               margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
               yaxis: { title: 'module score', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 },
@@ -139,7 +139,7 @@ export default function GeneSetExplorer({ bundle, contrast }: Props) {
 
           <div className="card p-4">
             <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Activity matrix — sets × samples</h3>
-            <Plot data={heatTrace} layout={{
+            <Plot data={heatTrace} downloadName={`set_activity_matrix_${contrast.id}`} layout={{
               margin: { t: 8, r: 10, b: 70, l: 130 }, height: Math.max(180, sets.length * 34 + 120),
               xaxis: { tickangle: -45, automargin: true }, yaxis: { automargin: true },
               paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
@@ -183,8 +183,9 @@ export default function GeneSetExplorer({ bundle, contrast }: Props) {
               </table>
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              Δ and p compare each set's module score between {contrast.numerator} and {contrast.denominator} (Welch test).
-              Per-gene expression &amp; statistics: use the Gene expression tab.
+              <b>Module score</b> = for each sample, the mean across a set's genes of that gene's z-score (log2 normalized
+              expression, standardized across samples). Δ and p compare each set's module score between {contrast.numerator}
+              and {contrast.denominator} (Welch test). Per-gene expression &amp; statistics: use the Gene expression tab.
             </p>
           </div>
         </>

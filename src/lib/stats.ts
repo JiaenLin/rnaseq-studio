@@ -21,6 +21,15 @@ export function zscore(vals: number[]): number[] {
   return vals.map(v => (v - m) / s)
 }
 
+// Combined score = −log10(p-value) × log2 fold change.
+// A signed ranking metric: large positive = strongly up-regulated AND significant;
+// large negative = strongly down-regulated AND significant.
+export function combinedScore(log2fc: number | null, pvalue: number | null): number | null {
+  if (log2fc == null || pvalue == null || Number.isNaN(log2fc) || Number.isNaN(pvalue)) return null
+  const negLogP = pvalue <= 0 ? 300 : -Math.log10(pvalue)
+  return negLogP * log2fc
+}
+
 // Welch two-sample test (normal-approximation p-value), b vs a.
 export function welchP(a: number[], b: number[]): { t: number; p: number; diff: number } {
   const ma = mean(a), mb = mean(b)

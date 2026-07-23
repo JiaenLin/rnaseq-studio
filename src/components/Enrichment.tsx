@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow, EnrichmentRow } from '../types'
+import { combinedScore } from '../lib/stats'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -15,6 +16,7 @@ export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
   const sources = useMemo(() => Array.from(new Set(rows.map(r => r.source))), [rows])
   const [source, setSource] = useState<string>('')
   const [termId, setTermId] = useState<string>('')
+  const [rankByComb, setRankByComb] = useState(false)
 
   const active = source || sources[0] || ''
   const ranked = useMemo(
@@ -30,6 +32,20 @@ export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
       if (r.gene_name) m.set(r.gene_name.toUpperCase(), r)
     }
     return m
+  }, [bundle.degByContrast, contrast.id])
+
+  // Global rank of every gene in the FULL DEG table, by combined score (desc).
+  const { rankMap, totalRanked } = useMemo(() => {
+    const scored = (bundle.degByContrast[contrast.id] || [])
+      .map(r => ({ r, c: combinedScore(r.log2FoldChange, r.pvalue) }))
+      .filter(x => x.c != null)
+      .sort((a, b) => (b.c as number) - (a.c as number))
+    const rankMap = new Map<string, number>()
+    scored.forEach((s, i) => {
+      rankMap.set(s.r.gene_id.toUpperCase(), i + 1)
+      if (s.r.gene_name) rankMap.set(s.r.gene_name.toUpperCase(), i + 1)
+    })
+    return { rankMap, totalRanked: scored.length }
   }, [bundle.degByContrast, contrast.id])
 
   const selected: EnrichmentRow | undefined =
@@ -63,6 +79,11 @@ export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
   }]
 
   const members = selected?.geneID ? selected.geneID.split('/').filter(Boolean) : []
+  const memberRows = members.map(g => {
+    const d = degMap.get(g.toUpperCase())
+    return { g, d, comb: d ? combinedScore(d.log2FoldChange, d.pvalue) : null, rank: rankMap.get(g.toUpperCase()) }
+  })
+  if (rankByComb) memberRows.sort((a, b) => (b.comb ?? -Infinity) - (a.comb ?? -Infinity))
 
   return (
     <div className="space-y-4">
@@ -84,8 +105,9 @@ export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
             font: { family: 'system-ui, sans-serif' },
           }}
           onPointClick={p => p?.customdata && setTermId(p.customdata)}
+          downloadName={`enrichment_${active.replace(/\W+/g, '_')}_${contrast.id}`}
         />
-        <p className="mt-1 text-center text-xs text-slate-400">Click a bar to list the genes under that term.</p>
+        <p className="mt-1 text-center text-xs text-slate-400">Bar length = gene count, colour = −log10 p.adjust. Click a bar to list the genes under that term.</p>
       </div>
 
       {selected && (
@@ -103,44 +125,58 @@ export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
           {members.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">This term has no member-gene list in the bundle.</p>
           ) : (
-            <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100 dark:border-slate-800">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
-                  <tr>
-                    <th className="px-3 py-2">Gene</th>
-                    <th className="px-3 py-2 text-right">log2FC</th>
-                    <th className="px-3 py-2 text-right">padj</th>
-                    <th className="px-3 py-2">significance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map(g => {
-                    const d = degMap.get(g.toUpperCase())
-                    const thr = contrast.padj_threshold ?? 0.05
-                    return (
-                      <tr key={g}
-                        className="cursor-pointer border-t border-slate-100 hover:bg-indigo-50/60 dark:border-slate-800 dark:hover:bg-slate-800"
-                        onClick={() => onSelectGene(g)}>
-                        <td className="px-3 py-1.5 font-medium">{g}</td>
-                        <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>
-                          {d ? d.log2FoldChange.toFixed(2) : '—'}
-                        </td>
-                        <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
-                        <td className="px-3 py-1.5">
-                          {d && d.padj != null && d.padj < thr
-                            ? <span className={`pill ${d.log2FoldChange > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                                {d.log2FoldChange > 0 ? `↑ ${contrast.numerator}` : `↑ ${contrast.denominator}`}
-                              </span>
-                            : <span className="pill bg-slate-100 text-slate-500 dark:bg-slate-700">n.s.</span>}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <label className="mb-2 flex items-center gap-1.5 text-sm text-slate-500">
+                <input type="checkbox" checked={rankByComb} onChange={e => setRankByComb(e.target.checked)} />
+                rank genes by combined score
+              </label>
+              <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100 dark:border-slate-800">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
+                    <tr>
+                      <th className="px-3 py-2">Gene</th>
+                      <th className="px-3 py-2 text-right">log2FC</th>
+                      <th className="px-3 py-2 text-right">combined</th>
+                      <th className="px-3 py-2 text-right">rank (all DEGs)</th>
+                      <th className="px-3 py-2 text-right">padj</th>
+                      <th className="px-3 py-2">significance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {memberRows.map(({ g, d, comb, rank }) => {
+                      const thr = contrast.padj_threshold ?? 0.05
+                      return (
+                        <tr key={g}
+                          className="cursor-pointer border-t border-slate-100 hover:bg-indigo-50/60 dark:border-slate-800 dark:hover:bg-slate-800"
+                          onClick={() => onSelectGene(g)}>
+                          <td className="px-3 py-1.5 font-medium">{g}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                            {d ? d.log2FoldChange.toFixed(2) : '—'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono">{comb != null ? comb.toFixed(2) : '—'}</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-slate-500">
+                            {rank ? `${rank} / ${totalRanked}` : '—'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
+                          <td className="px-3 py-1.5">
+                            {d && d.padj != null && d.padj < thr
+                              ? <span className={`pill ${d.log2FoldChange > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                                  {d.log2FoldChange > 0 ? `↑ ${contrast.numerator}` : `↑ ${contrast.denominator}`}
+                                </span>
+                              : <span className="pill bg-slate-100 text-slate-500 dark:bg-slate-700">n.s.</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-          <p className="mt-2 text-xs text-slate-400">Click a gene to open it in the Gene expression tab.</p>
+          <p className="mt-2 text-xs text-slate-400">
+            <b>Combined score</b> = −log10(p-value) × log2FC. <b>Rank</b> = the gene's position among all {totalRanked.toLocaleString()} tested
+            genes when the full DEG table is ranked by combined score (1 = most up-regulated &amp; significant). Click a gene to open it.
+          </p>
         </div>
       )}
     </div>
