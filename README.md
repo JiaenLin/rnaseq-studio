@@ -56,6 +56,21 @@ npm run dev                   # http://localhost:5173
 npm run build && npm run preview
 ```
 
+## Load your own analyses (bridge exporter)
+
+Convert a finished bulk RNA-seq analysis (a `~/RNAseq_Analyses/<project>` folder from the
+DESeq2 pipeline) into a Studio bundle, then open it with **Open analysis folder**:
+
+```bash
+Rscript scripts/export-bundle.R  <path-to-analysis-dir>  [out-dir]
+# → writes <analysis-dir>/studio_bundle/  (or per-cell-type subfolders)
+```
+
+It reads the DESeq2 object from the analysis's `.RData` (normalized counts), the
+`*_DEG_full.csv` tables, and the per-direction / GSEA enrichment CSVs, and emits the
+`meta.json` + CSV bundle. Requires R with DESeq2. **Keep bundles of sensitive/patient data
+local — do not commit them or deploy them to Pages.**
+
 ## Deploy to GitHub Pages
 
 Push to `main`. The workflow in `.github/workflows/deploy.yml` builds and publishes to
@@ -69,6 +84,8 @@ with no config.
 
 - [x] **Phase 1** — Explorer (gene expression, volcano, DEG table, enrichment) + bundle
       contract + Pages deploy. *(this)*
+- [x] **Bridge exporter** — `scripts/export-bundle.R` converts existing DESeq2 pipeline
+      outputs into Studio bundles.
 - [ ] **Phase 2** — In-browser small-data engine: webR (DESeq2 WASM) + JS-side enrichment
       (bundled GMT gene sets, hypergeometric ORA / fgsea-style GSEA).
 - [ ] **Phase 3** — Desktop app: Electron shell around the local R/DESeq2 engine for
