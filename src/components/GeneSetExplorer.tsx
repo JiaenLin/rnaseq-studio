@@ -1,191 +1,249 @@
 import { useMemo, useState } from 'react'
-import type { Bundle, Contrast } from '../types'
+import type { Bundle, Contrast, DEGRow } from '../types'
 import { conditionColors } from '../lib/palette'
-import { mean, welchP, zscore } from '../lib/stats'
+import { combinedScore, zscore } from '../lib/stats'
+import { hyperTail, bh } from '../lib/ora'
 import Plot from '../lib/Plot'
 
 interface Props {
   bundle: Bundle
   contrast: Contrast
+  onSelectGene: (gene: string) => void
 }
 
-interface ScoredSet {
-  name: string
-  nInput: number
-  nMatched: number
-  moduleByCol: number[]      // module score per sample column (data order)
-}
+interface ParsedSet { name: string; genesUpper: string[]; nInput: number; rows: number[] }
 
 const EXAMPLE = `Inflammation: TP53, IL6, TNF, IFNG, CXCL10, STAT1, NFKB1
 Proliferation: MYC, MKI67, CCND1, EGFR, KRAS
 Apoptosis: BAX, BCL2, CDKN1A, PTEN, SOD2`
 
-// Compare the ACTIVITY of several user-defined gene sets. Each set gets a module
-// score (mean of per-gene z-scores) per sample; we compare those scores across
-// sets and conditions. Per-gene detail lives in the Gene expression tab.
-export default function GeneSetExplorer({ bundle, contrast }: Props) {
+// For each user-defined gene set: its per-gene DEG statistics, how many members
+// are DEGs, and an over-representation (ORA) test as an activity readout — plus
+// a per-sample module score for cross-condition comparison.
+export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Props) {
   const { counts, meta } = bundle
   const S = counts.samples.length
+  const deg = bundle.degByContrast[contrast.id] || []
   const [text, setText] = useState('')
+  const [padjMax, setPadjMax] = useState(0.05)
+  const [lfcMin, setLfcMin] = useState(1)
+  const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
+  const [selName, setSelName] = useState('')
   const colors = conditionColors(meta.conditions)
 
-  const sampleCond = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const s of bundle.samples) m[s.sample] = s.condition
+  const degMap = useMemo(() => {
+    const m = new Map<string, DEGRow>()
+    for (const r of deg) { m.set(r.gene_id.toUpperCase(), r); if (r.gene_name) m.set(r.gene_name.toUpperCase(), r) }
     return m
-  }, [bundle.samples])
+  }, [deg])
 
-  const ordered = useMemo(() => {
-    const colByName = new Map(counts.samples.map((s, j) => [s, j] as const))
-    return [...counts.samples]
-      .sort((a, b) => (meta.conditions.indexOf(sampleCond[a] ?? '') - meta.conditions.indexOf(sampleCond[b] ?? '')) || a.localeCompare(b))
-      .map(s => ({ sample: s, col: colByName.get(s)!, cond: sampleCond[s] ?? '?' }))
-  }, [counts.samples, sampleCond, meta.conditions])
+  const { rankMap, totalRanked } = useMemo(() => {
+    const scored = deg.map(r => ({ r, c: combinedScore(r.log2FoldChange, r.pvalue) }))
+      .filter(x => x.c != null).sort((a, b) => (b.c as number) - (a.c as number))
+    const rm = new Map<string, number>()
+    scored.forEach((s, i) => { rm.set(s.r.gene_id.toUpperCase(), i + 1); if (s.r.gene_name) rm.set(s.r.gene_name.toUpperCase(), i + 1) })
+    return { rankMap: rm, totalRanked: scored.length }
+  }, [deg])
 
-  // Parse "Name: G1, G2, …" lines into scored sets.
-  const sets = useMemo<ScoredSet[]>(() => {
-    const out: ScoredSet[] = []
+  // Background = all tested genes; DEG set = thresholded genes (by name/id).
+  const background = useMemo(() => {
+    const bg = new Set<string>()
+    for (const r of deg) bg.add((r.gene_name || r.gene_id).toUpperCase())
+    return bg
+  }, [deg])
+  const N = background.size
+  const degUpper = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of deg) {
+      if (r.padj == null || r.padj > padjMax) continue
+      if (Math.abs(r.log2FoldChange) < lfcMin) continue
+      if (direction === 'up' && r.log2FoldChange <= 0) continue
+      if (direction === 'down' && r.log2FoldChange >= 0) continue
+      s.add((r.gene_name || r.gene_id).toUpperCase())
+    }
+    return s
+  }, [deg, padjMax, lfcMin, direction])
+  const n = useMemo(() => { let c = 0; for (const g of degUpper) if (background.has(g)) c++; return c }, [degUpper, background])
+
+  const sets = useMemo<ParsedSet[]>(() => {
+    const out: ParsedSet[] = []
     for (const line of text.split('\n')) {
-      const t = line.trim()
-      if (!t) continue
+      const t = line.trim(); if (!t) continue
       const ci = t.indexOf(':')
       const name = ci > 0 ? t.slice(0, ci).trim() : `Set ${out.length + 1}`
       const body = ci > 0 ? t.slice(ci + 1) : t
-      const tokens = Array.from(new Set(body.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)))
-      const rows: number[] = []
-      const seen = new Set<number>()
-      for (const tok of tokens) {
-        const i = counts.index.get(tok.toUpperCase())
-        if (i !== undefined && !seen.has(i)) { seen.add(i); rows.push(i) }
-      }
-      const z = rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
-      const moduleByCol = new Array(S).fill(0)
-      if (z.length) for (let j = 0; j < S; j++) { let s = 0; for (const zr of z) s += zr[j]; moduleByCol[j] = s / z.length }
-      out.push({ name, nInput: tokens.length, nMatched: rows.length, moduleByCol })
+      const toks = Array.from(new Set(body.split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(Boolean)))
+      const rows: number[] = []; const seen = new Set<number>()
+      for (const tk of toks) { const i = counts.index.get(tk); if (i !== undefined && !seen.has(i)) { seen.add(i); rows.push(i) } }
+      out.push({ name, genesUpper: toks, nInput: toks.length, rows })
     }
-    return out.filter(s => s.nMatched > 0)
-  }, [text, counts, S])
+    return out.filter(s => s.nInput > 0)
+  }, [text, counts])
 
-  // Grouped box: module score by set, grouped by condition.
+  // Per-set overlap + ORA enrichment (BH across the defined sets).
+  const setRows = useMemo(() => {
+    const rows = sets.map(s => {
+      const inBg = s.genesUpper.filter(g => background.has(g))
+      const K = inBg.length
+      const k = inBg.filter(g => degUpper.has(g)).length
+      const p = K > 0 && n > 0 ? hyperTail(k, K, n, N) : 1
+      const fold = n > 0 && K > 0 ? (k / n) / (K / N) : 0
+      return { name: s.name, nInput: s.nInput, K, k, fold, p }
+    })
+    const padj = bh(rows.map(r => r.p))
+    return rows.map((r, i) => ({ ...r, padj: padj[i] }))
+  }, [sets, background, degUpper, n, N])
+
+  const selected = setRows.find(r => r.name === selName) || setRows[0]
+  const selSet = sets.find(s => s.name === selected?.name)
+  const memberStats = useMemo(() => (selSet?.genesUpper || []).map(g => {
+    const d = degMap.get(g)
+    return { g, d, comb: d ? combinedScore(d.log2FoldChange, d.pvalue) : null, rank: rankMap.get(g) }
+  }).sort((a, b) => (b.comb ?? -Infinity) - (a.comb ?? -Infinity)), [selSet, degMap, rankMap])
+
+  // ── per-sample module score (secondary activity view) ──
+  const ordered = useMemo(() => {
+    const sc: Record<string, string> = {}
+    for (const s of bundle.samples) sc[s.sample] = s.condition
+    const colBy = new Map(counts.samples.map((s, j) => [s, j] as const))
+    return [...counts.samples]
+      .sort((a, b) => (meta.conditions.indexOf(sc[a] ?? '') - meta.conditions.indexOf(sc[b] ?? '')) || a.localeCompare(b))
+      .map(s => ({ sample: s, col: colBy.get(s)!, cond: sc[s] ?? '?' }))
+  }, [counts.samples, bundle.samples, meta.conditions])
+
+  const moduleBySet = useMemo(() => sets.map(s => {
+    const z = s.rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
+    const m = new Array(S).fill(0)
+    if (z.length) for (let j = 0; j < S; j++) { let a = 0; for (const zr of z) a += zr[j]; m[j] = a / z.length }
+    return { name: s.name, moduleByCol: m }
+  }), [sets, counts, S])
+
   const boxTraces = useMemo(() => {
     const per: Record<string, { x: string[]; y: number[] }> = {}
-    for (const set of sets)
-      for (const o of ordered) {
-        (per[o.cond] ||= { x: [], y: [] })
-        per[o.cond].x.push(set.name)
-        per[o.cond].y.push(set.moduleByCol[o.col])
-      }
+    for (const s of moduleBySet) for (const o of ordered) {
+      (per[o.cond] ||= { x: [], y: [] }); per[o.cond].x.push(s.name); per[o.cond].y.push(s.moduleByCol[o.col])
+    }
     return meta.conditions.filter(c => per[c]).map(c => ({
-      type: 'box', name: c, x: per[c].x, y: per[c].y,
-      boxpoints: 'all', jitter: 0.4, pointpos: 0,
+      type: 'box', name: c, x: per[c].x, y: per[c].y, boxpoints: 'all', jitter: 0.4, pointpos: 0,
       marker: { color: colors[c], size: 6 }, line: { color: colors[c] },
     }))
-  }, [sets, ordered, meta.conditions, colors])
+  }, [moduleBySet, ordered, meta.conditions, colors])
 
-  // Activity heatmap: sets × samples.
-  const heatTrace = useMemo(() => ([{
-    type: 'heatmap',
-    z: sets.map(set => ordered.map(o => set.moduleByCol[o.col])),
-    x: ordered.map(o => o.sample), y: sets.map(s => s.name),
-    colorscale: 'RdBu', reversescale: true, zmid: 0,
-    colorbar: { title: 'module<br>score', thickness: 12, len: 0.7 },
-    hovertemplate: '%{y} · %{x}<br>score %{z:.2f}<extra></extra>',
-  }]), [sets, ordered])
-
-  // Full statistics per set (per-condition means + numerator-vs-denominator test).
-  const stats = useMemo(() => sets.map(set => {
-    const byCond: Record<string, number[]> = {}
-    ordered.forEach(o => { (byCond[o.cond] ||= []).push(set.moduleByCol[o.col]) })
-    const a = byCond[contrast.denominator] || []
-    const b = byCond[contrast.numerator] || []
-    const test = a.length >= 2 && b.length >= 2 ? welchP(a, b) : null
-    return { set, byCond, test }
-  }), [sets, ordered, contrast])
+  const thr = contrast.padj_threshold ?? 0.05
 
   return (
     <div className="space-y-4">
+      {/* input + thresholds */}
       <div className="card p-4">
         <label className="mb-1 block text-sm font-medium text-slate-600 dark:text-slate-300">
           Define gene sets — one per line, <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">Name: GENE1, GENE2, …</code>
         </label>
-        <textarea
-          className="input h-28 w-full font-mono text-xs"
-          placeholder={EXAMPLE}
-          value={text}
-          onChange={e => setText(e.target.value)}
-        />
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <textarea className="input h-24 w-full font-mono text-xs" placeholder={EXAMPLE} value={text} onChange={e => setText(e.target.value)} />
+        <div className="mt-2 flex flex-wrap items-end gap-4 text-xs">
           <button className="btn py-1" onClick={() => setText(EXAMPLE)}>Load example</button>
           <button className="btn py-1" onClick={() => setText('')}>Clear</button>
-          {sets.length > 0 && <span className="text-slate-400">{sets.length} set{sets.length > 1 ? 's' : ''} scored · module score = mean z of member genes</span>}
+          <Field label="DEG padj ≤"><input type="number" step={0.001} min={0} max={1} className="input w-20 py-1" value={padjMax} onChange={e => setPadjMax(clamp(+e.target.value, 0, 1))} /></Field>
+          <Field label="|log2FC| ≥"><input type="number" step={0.1} min={0} className="input w-20 py-1" value={lfcMin} onChange={e => setLfcMin(clamp(+e.target.value, 0, 100))} /></Field>
+          <Field label="direction">
+            <select className="input py-1" value={direction} onChange={e => setDirection(e.target.value as any)}>
+              <option value="both">both</option><option value="up">up in {contrast.numerator}</option><option value="down">up in {contrast.denominator}</option>
+            </select>
+          </Field>
+          {sets.length > 0 && <span className="text-slate-400">{degUpper.size.toLocaleString()} DEGs · background {N.toLocaleString()}</span>}
         </div>
       </div>
 
       {sets.length === 0 ? (
-        <div className="card p-12 text-center text-sm text-slate-400">
-          Define one or more gene sets above to compare their activity across conditions.
-        </div>
+        <div className="card p-12 text-center text-sm text-slate-400">Define one or more gene sets to see their DEG statistics and enrichment.</div>
       ) : (
         <>
+          {/* set-level DEG overlap + ORA enrichment */}
           <div className="card p-4">
-            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Set activity by condition</h3>
-            <Plot data={boxTraces} downloadName={`set_activity_${contrast.id}`} layout={{
-              margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
-              yaxis: { title: 'module score', zeroline: true },
-              legend: { orientation: 'h', y: 1.12, x: 0 },
-              paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
-            }} style={{ height: 380 }} />
-          </div>
-
-          <div className="card p-4">
-            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Activity matrix — sets × samples</h3>
-            <Plot data={heatTrace} downloadName={`set_activity_matrix_${contrast.id}`} layout={{
-              margin: { t: 8, r: 10, b: 70, l: 130 }, height: Math.max(180, sets.length * 34 + 120),
-              xaxis: { tickangle: -45, automargin: true }, yaxis: { automargin: true },
-              paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
-            }} />
-          </div>
-
-          <div className="card p-4">
-            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Module-score statistics — {contrast.numerator} vs {contrast.denominator}
-            </h3>
+            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Set enrichment &amp; DEG overlap</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-3 py-2">Gene set</th>
-                    <th className="px-3 py-2 text-right">genes</th>
-                    {meta.conditions.map(c => <th key={c} className="px-3 py-2 text-right">mean {c}</th>)}
-                    <th className="px-3 py-2 text-right">Δ ({contrast.numerator}−{contrast.denominator})</th>
-                    <th className="px-3 py-2 text-right">t</th>
-                    <th className="px-3 py-2 text-right">p</th>
+                    <th className="px-3 py-2 text-right">genes (found/input)</th>
+                    <th className="px-3 py-2 text-right">DEGs</th>
+                    <th className="px-3 py-2 text-right">% DEG</th>
+                    <th className="px-3 py-2 text-right">fold enrich.</th>
+                    <th className="px-3 py-2 text-right">ORA p</th>
+                    <th className="px-3 py-2 text-right">ORA padj</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.map(({ set, byCond, test }) => (
-                    <tr key={set.name} className="border-t border-slate-100 dark:border-slate-800">
-                      <td className="px-3 py-1.5 font-medium">{set.name}</td>
-                      <td className="px-3 py-1.5 text-right text-slate-400">{set.nMatched}/{set.nInput}</td>
-                      {meta.conditions.map(c => (
-                        <td key={c} className="px-3 py-1.5 text-right font-mono">
-                          {byCond[c]?.length ? mean(byCond[c]).toFixed(2) : '—'}
-                        </td>
-                      ))}
-                      <td className={`px-3 py-1.5 text-right font-mono ${test && test.diff > 0 ? 'text-red-600' : 'text-blue-600'}`}>
-                        {test ? test.diff.toFixed(2) : '—'}
-                      </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{test ? test.t.toFixed(2) : '—'}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{test ? fmtP(test.p) : '—'}</td>
+                  {setRows.map(r => (
+                    <tr key={r.name} onClick={() => setSelName(r.name)}
+                      className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 ${selected?.name === r.name ? 'bg-indigo-50/60 dark:bg-slate-800' : 'hover:bg-indigo-50/40'}`}>
+                      <td className="px-3 py-1.5 font-medium">{r.name}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{r.K}/{r.nInput}</td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold text-indigo-600">{r.k}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{r.K ? (100 * r.k / r.K).toFixed(0) : '0'}%</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{r.fold ? r.fold.toFixed(1) + '×' : '—'}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{fmtP(r.p)}</td>
+                      <td className={`px-3 py-1.5 text-right font-mono ${r.padj < thr ? 'font-semibold text-red-600' : ''}`}>{fmtP(r.padj)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              <b>Module score</b> = for each sample, the mean across a set's genes of that gene's z-score (log2 normalized
-              expression, standardized across samples). Δ and p compare each set's module score between {contrast.numerator}
-              and {contrast.denominator} (Welch test). Per-gene expression &amp; statistics: use the Gene expression tab.
+              <b>Enrichment as activity readout:</b> hypergeometric over-representation of the set's genes among the {degUpper.size.toLocaleString()} DEGs
+              (padj ≤ {padjMax}, |log2FC| ≥ {lfcMin}) against {N.toLocaleString()} tested genes; padj is BH across your {setRows.length} set(s). Click a row for per-gene detail.
+            </p>
+          </div>
+
+          {/* selected set — per-gene DEG statistics */}
+          {selSet && (
+            <div className="card p-4">
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{selSet.name} — per-gene DEG statistics</h3>
+                <span className="text-sm text-slate-500">{selected?.k}/{selected?.K} genes are DEGs</span>
+              </div>
+              <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100 dark:border-slate-800">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
+                    <tr>
+                      <th className="px-3 py-2">Gene</th><th className="px-3 py-2 text-right">log2FC</th>
+                      <th className="px-3 py-2 text-right">padj</th><th className="px-3 py-2 text-right">combined</th>
+                      <th className="px-3 py-2 text-right">rank (all DEGs)</th><th className="px-3 py-2">significance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {memberStats.map(({ g, d, comb, rank }) => (
+                      <tr key={g} onClick={() => onSelectGene(g)}
+                        className="cursor-pointer border-t border-slate-100 hover:bg-indigo-50/60 dark:border-slate-800 dark:hover:bg-slate-800">
+                        <td className="px-3 py-1.5 font-medium">{g}{!d && <span className="ml-1 text-xs text-slate-400">(not tested)</span>}</td>
+                        <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>{d ? d.log2FoldChange.toFixed(2) : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{comb != null ? comb.toFixed(2) : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-slate-500">{rank ? `${rank} / ${totalRanked}` : '—'}</td>
+                        <td className="px-3 py-1.5">
+                          {d && d.padj != null && d.padj < thr
+                            ? <span className={`pill ${d.log2FoldChange > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{d.log2FoldChange > 0 ? `↑ ${contrast.numerator}` : `↑ ${contrast.denominator}`}</span>
+                            : <span className="pill bg-slate-100 text-slate-500 dark:bg-slate-700">n.s.</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-slate-400"><b>Combined</b> = −log10(p)×log2FC; <b>rank</b> = position among all {totalRanked.toLocaleString()} tested genes by combined score. Click a gene to open it.</p>
+            </div>
+          )}
+
+          {/* per-sample module score (secondary) */}
+          <div className="card p-4">
+            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Per-sample activity (module score)</h3>
+            <Plot data={boxTraces} downloadName={`set_activity_${contrast.id}`} layout={{
+              margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group', yaxis: { title: 'module score', zeroline: true },
+              legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
+            }} style={{ height: 340 }} />
+            <p className="mt-1 text-xs text-slate-400">
+              Module score = per sample, the mean across a set's genes of each gene's z-score (log2 normalized, standardized across samples).
+              A complementary, expression-based activity view (the enrichment above is DEG-based).
             </p>
           </div>
         </>
@@ -194,6 +252,10 @@ export default function GeneSetExplorer({ bundle, contrast }: Props) {
   )
 }
 
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="flex items-center gap-1.5 text-slate-500"><span className="whitespace-nowrap">{label}</span>{children}</label>
+}
+const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
 function fmtP(p: number | null | undefined): string {
   if (p == null || Number.isNaN(p)) return '—'
   if (p === 0) return '<1e-300'

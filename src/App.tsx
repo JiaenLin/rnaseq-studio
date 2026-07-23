@@ -112,7 +112,7 @@ export default function App() {
             {tab === 'enrichment' &&
               <Enrichment bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'geneset' &&
-              <GeneSetExplorer bundle={bundle} contrast={contrast} />}
+              <GeneSetExplorer bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
           </ErrorBoundary>
         )}
       </main>
