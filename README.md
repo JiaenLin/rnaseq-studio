@@ -1,49 +1,61 @@
 # RNA-seq Studio
 
-Interactive bulk RNA-seq **differential-expression & enrichment explorer** — search any
-gene's expression across conditions, browse volcano plots and DEG tables, and inspect
-pathway enrichment. Runs entirely in your browser; **your data never leaves your device.**
+**An interactive explorer for bulk RNA-seq results — right in your browser.**
 
-This is the front-end + shared contract for a dual-target tool extracted from a local
-DESeq2 pipeline. See **Architecture** below.
+👉 **[Open the live app](https://jiaenlin.github.io/rnaseq-studio/)**
+
+Load a result bundle and explore differential expression and pathway activity: search any
+gene, scan volcano plots, sort DEG tables, run tunable enrichment, and score your own gene
+sets. Everything runs client-side — **your data never leaves your device** (nothing is uploaded).
 
 ---
 
-## Architecture
+## What you can do
 
-One React + Plotly UI, fed by a fixed **result-bundle** format, with two interchangeable
-analysis engines behind it:
+- **Gene expression** — search a single gene *or* a whole list; see per-group expression,
+  group means, a per-gene DEG bar plot, an expression heatmap, and a set module score.
+- **Volcano** — interactive, with tunable −log10(padj) and |log2FC| cutoffs; click a point to
+  jump to that gene.
+- **DEG table** — sortable/filterable, with a combined score (−log10 p × log2FC) and CSV export.
+- **Enrichment** — live, tunable over-representation analysis (ORA): set your padj / log2FC /
+  direction and watch enriched pathways update; drill into a term's genes and their stats.
+- **Gene sets** — define your own sets and get their DEG overlap, an ORA activity readout, and
+  a per-sample module score (rank running-sum, mean rank, or mean z-score).
+- Every chart exports to **PNG**.
 
-```
-                 ┌─────────────────────────────┐
-   small data →  │  in-browser engine (webR)   │ ─┐
-                 └─────────────────────────────┘  │   result bundle
-                 ┌─────────────────────────────┐  ├──► (meta.json + CSVs) ──► Explorer (this app)
-   large data →  │  desktop engine (local R)   │ ─┘
-                 └─────────────────────────────┘
-```
+## Using it
 
-- **GitHub Pages build** (this repo): the explorer + an in-browser WASM engine for small
-  datasets. Zero install, shareable URL.
-- **Desktop app** (Electron, planned): the same UI wrapping the full local R/DESeq2
-  pipeline for large datasets, using all CPU cores.
+1. Open **[the live app](https://jiaenlin.github.io/rnaseq-studio/)** (it starts on a demo dataset).
+2. Click **⭱ Open bundle (.zip)** — or just **drop a `.zip` anywhere** on the page. An unzipped
+   folder works too (**folder…**).
+3. Explore. To load a different dataset, open another bundle.
 
-Because both engines emit the **same bundle**, the explorer is engine-agnostic — it only
-ever reads files. That is what lets the UI ship before either engine is finished.
+---
 
-### The result-bundle contract (schema v1)
+## The bundle format (brief)
 
-A bundle is a folder (uploaded via **Open analysis folder**, or served under `/sample/`):
+A **bundle** is the small set of files the explorer reads — any pipeline that emits this format
+works. Zip the folder (or drop the folder itself):
 
 | File | Contents |
 |------|----------|
-| `meta.json` | project, species, control group, contrasts (see `src/types.ts` → `BundleMeta`) |
+| `meta.json` | project, species, control group, and the list of contrasts |
 | `samples.csv` | `sample, condition, [covariates…]` |
-| `normalized_counts.csv` | `gene_id, [gene_name,] <sample1>, <sample2>, …` (DESeq2-normalized) |
-| `deg_<contrastId>.csv` | `gene_id, gene_name, baseMean, log2FoldChange, lfcSE, pvalue, padj` |
-| `enrichment_<contrastId>.csv` | `source, method, id, description, direction, setSize, count, score, pvalue, padj` (optional) |
+| `normalized_counts.csv` | `gene_id, [gene_name,] <sample1>, <sample2>, …` |
+| `deg_<contrast>.csv` | `gene_id, gene_name, baseMean, log2FoldChange, lfcSE, pvalue, padj` |
+| `genesets.csv` *(optional)* | `source, set_id, set_name, genes` — enables live ORA |
 
-The full typed contract lives in [`src/types.ts`](src/types.ts).
+One `deg_<contrast>.csv` per contrast (named in `meta.json`); missing values may be `NA`. The
+full typed spec is in [`src/types.ts`](src/types.ts).
+
+## Producing bundles → the analysis app
+
+RNA-seq Studio is only the **viewer**. Bundles are produced by a separate analysis app that runs
+the DESeq2 pipeline (counts → differential expression → enrichment) and writes the files above.
+
+> **📦 Analysis app:** _coming soon_ — repository link will go here.
+
+_(An interim reference exporter for the existing R pipeline lives in `scripts/export-bundle.R`.)_
 
 ---
 
@@ -51,42 +63,15 @@ The full typed contract lives in [`src/types.ts`](src/types.ts).
 
 ```bash
 npm install
-node scripts/gen-sample.mjs   # writes the demo bundle to public/sample/
+node scripts/gen-sample.mjs   # regenerate the demo bundle in public/sample/
 npm run dev                   # http://localhost:5173
 npm run build && npm run preview
 ```
 
-## Load your own analyses (bridge exporter)
+Stack: React + TypeScript + Vite + Tailwind + Plotly; zip via `fflate`. No backend.
 
-Convert a finished bulk RNA-seq analysis (a `~/RNAseq_Analyses/<project>` folder from the
-DESeq2 pipeline) into a Studio bundle, then open it with **Open analysis folder**:
+## Deploy
 
-```bash
-Rscript scripts/export-bundle.R  <path-to-analysis-dir>  [out-dir]
-# → writes <analysis-dir>/studio_bundle/  (or per-cell-type subfolders)
-```
-
-It reads the DESeq2 object from the analysis's `.RData` (normalized counts), the
-`*_DEG_full.csv` tables, and the per-direction / GSEA enrichment CSVs, and emits the
-`meta.json` + CSV bundle. Requires R with DESeq2. **Keep bundles of sensitive/patient data
-local — do not commit them or deploy them to Pages.**
-
-## Deploy to GitHub Pages
-
-Push to `main`. The workflow in `.github/workflows/deploy.yml` builds and publishes to
-Pages automatically. In the repo settings, set **Pages → Source → GitHub Actions** once.
-The app uses a relative base path, so it works under `https://<user>.github.io/<repo>/`
-with no config.
-
----
-
-## Roadmap
-
-- [x] **Phase 1** — Explorer (gene expression, volcano, DEG table, enrichment) + bundle
-      contract + Pages deploy. *(this)*
-- [x] **Bridge exporter** — `scripts/export-bundle.R` converts existing DESeq2 pipeline
-      outputs into Studio bundles.
-- [ ] **Phase 2** — In-browser small-data engine: webR (DESeq2 WASM) + JS-side enrichment
-      (bundled GMT gene sets, hypergeometric ORA / fgsea-style GSEA).
-- [ ] **Phase 3** — Desktop app: Electron shell around the local R/DESeq2 engine for
-      large datasets.
+Pushing to `main` triggers `.github/workflows/deploy.yml`, which builds and publishes to GitHub
+Pages automatically. The app uses a relative base path, so it works under
+`https://<user>.github.io/<repo>/` with no extra config.
