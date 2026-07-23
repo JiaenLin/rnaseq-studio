@@ -9,6 +9,9 @@ import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
 import Enrichment from './components/Enrichment'
 
+const DOI_URL = 'https://doi.org/10.5281/zenodo.21514152'
+const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
+
 type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -155,7 +158,9 @@ export default function App() {
       </main>
 
       <footer className="border-t border-slate-200 py-3 text-center text-xs text-slate-400 dark:border-slate-700">
-        Runs locally in your browser · your data never leaves this device
+        Runs locally in your browser · your data never leaves this device ·{' '}
+        <button className="underline hover:text-indigo-600" onClick={() => setShowHelp(true)}>please cite</button>{' '}
+        <a className="underline hover:text-indigo-600" href={DOI_URL} target="_blank" rel="noopener noreferrer">(DOI)</a>
       </footer>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
@@ -164,6 +169,7 @@ export default function App() {
 }
 
 function HelpModal({ onClose }: { onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
       <div className="card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
@@ -193,6 +199,18 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           One <code>deg_&lt;contrast&gt;.csv</code> per contrast (named in <code>meta.json</code>). Missing values may be <code>NA</code>.
           Counts should be normalized (e.g. DESeq2 median-of-ratios). The full typed spec lives in the project's <code>src/types.ts</code> / README.
         </p>
+
+        <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-slate-500">How to cite</h3>
+        <p className="mt-1 text-sm text-slate-500">If RNA-seq Studio helped your work, please cite it:</p>
+        <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          {CITATION}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button className="btn py-1" onClick={() => { navigator.clipboard?.writeText(CITATION); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>
+            {copied ? 'Copied ✓' : 'Copy citation'}
+          </button>
+          <a className="btn py-1" href={DOI_URL} target="_blank" rel="noopener noreferrer">Open DOI ↗</a>
+        </div>
       </div>
     </div>
   )
