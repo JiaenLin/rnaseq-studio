@@ -3,6 +3,7 @@ import type { Bundle, Contrast, DEGRow } from '../types'
 import { conditionColors } from '../lib/palette'
 import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
+import { computeSampleRanks, singscore } from '../lib/scores'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -29,6 +30,7 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   const [lfcMin, setLfcMin] = useState(1)
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
   const [selName, setSelName] = useState('')
+  const [scoreMethod, setScoreMethod] = useState<'singscore' | 'meanz'>('singscore')
   const colors = conditionColors(meta.conditions)
 
   const degMap = useMemo(() => {
@@ -111,12 +113,19 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
       .map(s => ({ sample: s, col: colBy.get(s)!, cond: sc[s] ?? '?' }))
   }, [counts.samples, bundle.samples, meta.conditions])
 
-  const moduleBySet = useMemo(() => sets.map(s => {
-    const z = s.rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
+  const nGenes = counts.geneIds.length
+  // Within-sample gene ranks for singscore (memoized per bundle; ~one sort/sample).
+  const ranks = useMemo(() => computeSampleRanks(counts.values, nGenes, S), [counts, nGenes, S])
+  const meanZ = (rows: number[]) => {
+    const z = rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
     const m = new Array(S).fill(0)
     if (z.length) for (let j = 0; j < S; j++) { let a = 0; for (const zr of z) a += zr[j]; m[j] = a / z.length }
-    return { name: s.name, moduleByCol: m }
-  }), [sets, counts, S])
+    return m
+  }
+  const moduleBySet = useMemo(() => sets.map(s => ({
+    name: s.name,
+    moduleByCol: scoreMethod === 'singscore' ? singscore(s.rows, ranks, nGenes, S) : meanZ(s.rows),
+  })), [sets, scoreMethod, ranks, counts, S, nGenes])
 
   const boxTraces = useMemo(() => {
     const per: Record<string, { x: string[]; y: number[] }> = {}
@@ -236,14 +245,26 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
 
           {/* per-sample module score (secondary) */}
           <div className="card p-4">
-            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Per-sample activity (module score)</h3>
-            <Plot data={boxTraces} downloadName={`set_activity_${contrast.id}`} layout={{
-              margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group', yaxis: { title: 'module score', zeroline: true },
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Per-sample activity (module score)</h3>
+              <label className="flex items-center gap-1.5 text-sm text-slate-500">
+                score method:
+                <select className="input py-1" value={scoreMethod} onChange={e => setScoreMethod(e.target.value as any)}>
+                  <option value="singscore">singscore (rank-based, stable)</option>
+                  <option value="meanz">mean z-score</option>
+                </select>
+              </label>
+            </div>
+            <Plot data={boxTraces} downloadName={`set_activity_${scoreMethod}_${contrast.id}`} layout={{
+              margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
+              yaxis: { title: scoreMethod === 'singscore' ? 'singscore' : 'module score (mean z)', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
             }} style={{ height: 340 }} />
             <p className="mt-1 text-xs text-slate-400">
-              Module score = per sample, the mean across a set's genes of each gene's z-score (log2 normalized, standardized across samples).
-              A complementary, expression-based activity view (the enrichment above is DEG-based).
+              {scoreMethod === 'singscore'
+                ? 'singscore: per sample, genes are ranked within that sample and the set’s normalized mean rank is taken — a single-sample score, independent of the other samples (stable with few replicates).'
+                : 'mean z-score: per sample, the mean of each set gene’s z-score (standardized across samples) — simple but unstable when replicates are few.'}
+              {' '}Complementary, expression-based activity view (the enrichment above is DEG-based).
             </p>
           </div>
         </>
