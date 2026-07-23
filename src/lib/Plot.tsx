@@ -21,13 +21,19 @@ export default function Plot({ data, layout, config, className, style, onPointCl
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    Plotly.react(el, data, layout ?? {}, {
-      responsive: true,
-      displaylogo: false,
-      modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-      toImageButtonOptions: { format: 'png', filename: downloadName || 'plot', scale: 2 },
-      ...config,
-    })
+    try {
+      Plotly.react(el, data, layout ?? {}, {
+        responsive: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+        toImageButtonOptions: { format: 'png', filename: downloadName || 'plot', scale: 2 },
+        ...config,
+      })
+    } catch (err) {
+      // Never let a single plot failure bubble up and blank the app.
+      console.error('[Plot] render failed:', err)
+      el.innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8;font-size:.85rem">This chart could not be rendered.</div>'
+    }
   }, [data, layout, config, downloadName])
 
   useEffect(() => {

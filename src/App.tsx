@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Bundle } from './types'
 import { loadBundleFromUrl, loadBundleFromFiles } from './lib/bundle'
+import { ErrorBoundary } from './lib/ErrorBoundary'
 import Overview from './components/Overview'
 import GeneExpression from './components/GeneExpression'
 import GeneSetExplorer from './components/GeneSetExplorer'
@@ -99,7 +100,7 @@ export default function App() {
           </Center>
         )}
         {!loading && bundle && contrast && (
-          <>
+          <ErrorBoundary key={`${tab}:${contrastId}`}>
             {tab === 'overview' &&
               <Overview bundle={bundle} onOpenContrast={id => { setContrastId(id); setTab('volcano') }} />}
             {tab === 'expression' &&
@@ -112,7 +113,7 @@ export default function App() {
               <Enrichment bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'geneset' &&
               <GeneSetExplorer bundle={bundle} contrast={contrast} />}
-          </>
+          </ErrorBoundary>
         )}
       </main>
 
