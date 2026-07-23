@@ -87,6 +87,19 @@ const SETS = {
   'WikiPathways': ['Apoptosis','Cell cycle','TNF-alpha signaling','VEGFA-VEGFR2 pathway','Inflammatory Response Pathway'],
   'GSEA:H': ['HALLMARK_TNFA_SIGNALING_VIA_NFKB','HALLMARK_INFLAMMATORY_RESPONSE','HALLMARK_HYPOXIA','HALLMARK_P53_PATHWAY','HALLMARK_APOPTOSIS','HALLMARK_INTERFERON_GAMMA_RESPONSE','HALLMARK_E2F_TARGETS','HALLMARK_G2M_CHECKPOINT'],
 }
+// Draw plausible member genes for a set (biased to DEGs so heatmaps show signal).
+const degPool = genes.filter((_, i) => padj[i] < 0.1).map(g => g.name)
+const anyPool = genes.map(g => g.name)
+function sampleMembers(n) {
+  const pool = degPool.length >= n ? degPool : anyPool
+  const picked = new Set()
+  let guard = 0
+  while (picked.size < Math.min(n, pool.length) && guard < n * 25) {
+    picked.add(pool[Math.floor(rnd() * pool.length)]); guard++
+  }
+  return [...picked]
+}
+
 const enrich = []
 let termN = 0
 for (const [source, terms] of Object.entries(SETS)) {
@@ -103,6 +116,7 @@ for (const [source, terms] of Object.entries(SETS)) {
       setSize, count,
       score: method === 'GSEA' ? (rnd() < 0.5 ? -1 : 1) * (1.3 + rnd() * 1.4) : 1 + rnd() * 4,
       pvalue: p, padj: Math.min(1, p * 3),
+      geneID: sampleMembers(count).join('/'),
     })
   })
 }
@@ -123,9 +137,9 @@ writeFileSync(join(outDir, 'deg_KO_vs_WT.csv'),
       d.p.toExponential(3), padj[i].toExponential(3)].join(','))))
 
 writeFileSync(join(outDir, 'enrichment_KO_vs_WT.csv'),
-  csv(['source', 'method', 'id', 'description', 'direction', 'setSize', 'count', 'score', 'pvalue', 'padj'],
+  csv(['source', 'method', 'id', 'description', 'direction', 'setSize', 'count', 'score', 'pvalue', 'padj', 'geneID'],
     enrich.map(e => [e.source, e.method, e.id, `"${e.description}"`, e.direction, e.setSize, e.count,
-      e.score.toFixed(3), e.pvalue.toExponential(3), e.padj.toExponential(3)].join(','))))
+      e.score.toFixed(3), e.pvalue.toExponential(3), e.padj.toExponential(3), e.geneID].join(','))))
 
 writeFileSync(join(outDir, 'meta.json'), JSON.stringify({
   schema: 1,

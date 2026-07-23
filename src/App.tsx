@@ -3,14 +3,16 @@ import type { Bundle } from './types'
 import { loadBundleFromUrl, loadBundleFromFiles } from './lib/bundle'
 import Overview from './components/Overview'
 import GeneExpression from './components/GeneExpression'
+import GeneSetExplorer from './components/GeneSetExplorer'
 import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
 import Enrichment from './components/Enrichment'
 
-type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment'
+type Tab = 'overview' | 'expression' | 'geneset' | 'volcano' | 'degs' | 'enrichment'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'expression', label: 'Gene expression' },
+  { id: 'geneset', label: 'Gene sets' },
   { id: 'volcano', label: 'Volcano' },
   { id: 'degs', label: 'DEG table' },
   { id: 'enrichment', label: 'Enrichment' },
@@ -102,6 +104,8 @@ export default function App() {
               <Overview bundle={bundle} onOpenContrast={id => { setContrastId(id); setTab('volcano') }} />}
             {tab === 'expression' &&
               <GeneExpression bundle={bundle} contrast={contrast} selectedGene={gene} onSelectGene={pickGene} />}
+            {tab === 'geneset' &&
+              <GeneSetExplorer bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'volcano' &&
               <Volcano bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'degs' &&
