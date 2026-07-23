@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>webR + DESeq2 feasibility test</title>
+  <!-- Enables cross-origin isolation (SharedArrayBuffer) on GitHub Pages -->
+  <script src="coi-serviceworker.min.js"></script>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 820px; }
+    h1 { font-size: 1.2rem; }
+    #log { white-space: pre-wrap; background: #0b1120; color: #d1d5db; padding: 1rem;
+           border-radius: 8px; min-height: 12rem; }
+    .ok { color: #34d399; } .err { color: #f87171; } .hi { color: #a5b4fc; }
+  </style>
+</head>
+<body>
+  <h1>webR + DESeq2 feasibility test</h1>
+  <p>Loads webR (R 4.6.0) from the CDN, installs DESeq2 from r-universe, and runs a differential-expression
+     analysis — entirely in your browser. First run downloads the R runtime and DESeq2 (~tens of MB, then cached).</p>
+  <div id="log">starting…</div>
+
+  <script type="module">
+    const logEl = document.getElementById('log')
+    const t0 = performance.now()
+    const line = (m, cls) => {
+      const s = `[+${((performance.now() - t0) / 1000).toFixed(1)}s] ${m}`
+      logEl.innerHTML += '\n' + (cls ? `<span class="${cls}">${s}</span>` : s)
+      console.log(s)
+    }
+
+    try {
+      logEl.textContent = ''
+      line('crossOriginIsolated = ' + self.crossOriginIsolated, self.crossOriginIsolated ? 'ok' : 'err')
+      if (!self.crossOriginIsolated) line('(the COI service worker will reload the page once on first visit — if this persists, reload manually)')
+
+      line('importing webR v0.6.0 …', 'hi')
+      const { WebR } = await import('https://webr.r-wasm.org/v0.6.0/webr.mjs')
+      const webR = new WebR()
+      await webR.init()
+      line('webR ready: ' + (await webR.evalRString('R.version.string')), 'ok')
+
+      line('installing DESeq2 from r-universe (downloads WASM binaries; please wait) …', 'hi')
+      await webR.installPackages(['DESeq2'], {
+        repos: ['https://bioc.r-universe.dev', 'https://repo.r-wasm.org'],
+      })
+      line('DESeq2 + dependencies installed.', 'ok')
+
+      line('running DESeq2 on synthetic data …', 'hi')
+      const out = await webR.evalRString(`
+        suppressMessages(library(DESeq2))
+        set.seed(1)
+        n <- 1500
+        cnt <- matrix(rnbinom(n * 6, mu = 100, size = 10), ncol = 6)
+        rownames(cnt) <- paste0("g", seq_len(n)); colnames(cnt) <- paste0("s", 1:6)
+        cnt[1:120, 4:6] <- as.integer(cnt[1:120, 4:6] * 3)
+        cd <- data.frame(condition = factor(rep(c("A","B"), each = 3)))
+        dds <- DESeqDataSetFromMatrix(cnt, cd, ~condition)
+        dds <- DESeq(dds, quiet = TRUE)
+        res <- results(dds)
+        sprintf("%d / %d genes at padj<0.05; top gene %s (lfc %.2f, padj %.1e)",
+          sum(res$padj < 0.05, na.rm = TRUE), nrow(res),
+          rownames(res)[which.min(res$padj)],
+          res$log2FoldChange[which.min(res$padj)], min(res$padj, na.rm = TRUE))
+      `)
+      line('✅ SUCCESS — DESeq2 ran in the browser: ' + out, 'ok')
+      line('Feasibility confirmed. webR-based analysis is viable.', 'ok')
+    } catch (e) {
+      line('❌ FAILED: ' + (e && e.message ? e.message : e), 'err')
+      line('(copy this whole log and share it)', 'err')
+      console.error(e)
+    }
+  </script>
+</body>
+</html>
