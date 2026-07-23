@@ -154,33 +154,47 @@ for (ct in cts) {
   counts_df <- cbind(counts_df, round(as.data.frame(nc), 3))
   write.csv(counts_df, file.path(outDir, "normalized_counts.csv"), row.names = FALSE)
 
-  # genesets.csv (optional) — full memberships for live ORA, via msigdbr,
-  # restricted to genes present in this dataset. Best-effort; robust to API renames.
-  ok <- FALSE
-  if (requireNamespace("msigdbr", quietly = TRUE)) {
-    ok <- tryCatch({
-      bgSym <- unique(toupper(unname(gn)))
-      d <- as.data.frame(msigdbr::msigdbr(species = "Homo sapiens"))
-      col <- function(cands) { for (c in cands) if (c %in% names(d)) return(c); NA }
-      nameCol <- col(c("gs_name")); symCol <- col(c("gene_symbol"))
-      collCol <- col(c("gs_collection", "gs_cat")); subCol <- col(c("gs_subcollection", "gs_subcat"))
-      coll <- d[[collCol]]; sub <- d[[subCol]]
-      src <- ifelse(coll == "H", "Hallmark",
-             ifelse(grepl("^CP:KEGG", sub), "KEGG",
-             ifelse(sub == "CP:REACTOME", "Reactome",
-             ifelse(sub == "CP:WIKIPATHWAYS", "WikiPathways",
-             ifelse(sub == "GO:BP", "GO:BP", NA)))))
-      keep <- !is.na(src) & toupper(d[[symCol]]) %in% bgSym
-      if (any(keep)) {
-        gs <- data.frame(source = src[keep], set_id = d[[nameCol]][keep],
-                         set_name = d[[nameCol]][keep], gene = d[[symCol]][keep], stringsAsFactors = FALSE)
-        write.csv(gs, file.path(outDir, "genesets.csv"), row.names = FALSE)
-        message("  [genesets] ", nrow(gs), " memberships across ", length(unique(gs$set_id)), " sets")
-        TRUE
-      } else FALSE
-    }, error = function(err) { message("  [genesets] skipped: ", conditionMessage(err)); FALSE })
+  # genesets.csv — full memberships for live ORA (msigdbr, force-installed),
+  # restricted to genes present in this dataset. Robust to msigdbr API renames.
+  if (!requireNamespace("msigdbr", quietly = TRUE)) {
+    message("  [genesets] msigdbr not found — installing from CRAN ...")
+    try(install.packages("msigdbr", repos = "https://cloud.r-project.org"), silent = TRUE)
   }
-  if (!ok) message("  [genesets] not written (msigdbr unavailable/empty) — Custom ORA disabled for this bundle.")
+  if (!requireNamespace("msigdbr", quietly = TRUE))
+    stop("msigdbr is required for gene sets but could not be installed; install it and re-run.")
+
+  bgSym <- unique(toupper(unname(gn)))
+  d <- as.data.frame(msigdbr::msigdbr(species = "Homo sapiens"))
+  col <- function(cands) { for (c in cands) if (c %in% names(d)) return(c); NA_character_ }
+  nameCol <- col(c("gs_name")); symCol <- col(c("gene_symbol"))
+  collCol <- col(c("gs_collection", "gs_cat")); subCol <- col(c("gs_subcollection", "gs_subcat"))
+  coll <- d[[collCol]]; sub <- d[[subCol]]
+  src <- ifelse(coll == "H", "Hallmark",
+         ifelse(grepl("^CP:KEGG", sub), "KEGG",
+         ifelse(sub == "CP:REACTOME", "Reactome",
+         ifelse(sub == "CP:WIKIPATHWAYS", "WikiPathways",
+         ifelse(sub == "GO:BP", "GO:BP", NA_character_)))))
+  keep <- !is.na(src) & toupper(d[[symCol]]) %in% bgSym
+  gs <- data.frame(source = src[keep], set_id = d[[nameCol]][keep],
+                   set_name = d[[nameCol]][keep], gene = d[[symCol]][keep], stringsAsFactors = FALSE)
+  # compact: one row per set, genes "/"-joined (keeps the file small)
+  byset <- split(gs$gene, gs$set_id)
+  meta1 <- gs[!duplicated(gs$set_id), ]
+  ord <- match(names(byset), meta1$set_id)
+  compact <- data.frame(source = meta1$source[ord], set_id = names(byset),
+                        set_name = meta1$set_name[ord],
+                        genes = vapply(byset, function(x) paste(unique(x), collapse = "/"), ""),
+                        stringsAsFactors = FALSE)
+  write.csv(compact, file.path(outDir, "genesets.csv"), row.names = FALSE)
+
+  # ── gene-set library info ──
+  message("  [genesets] msigdbr ", as.character(utils::packageVersion("msigdbr")),
+          "  (restricted to ", length(bgSym), " dataset genes)")
+  for (s in sort(unique(gs$source))) {
+    ss <- gs[gs$source == s, ]
+    message(sprintf("    %-13s %5d sets  %6d genes", s, length(unique(ss$set_id)), length(unique(ss$gene))))
+  }
+  message(sprintf("    %-13s %5d sets  %6d genes", "TOTAL", length(unique(gs$set_id)), length(unique(gs$gene))))
 
   # meta.json
   meta <- list(schema = 1, project = project, species = species,

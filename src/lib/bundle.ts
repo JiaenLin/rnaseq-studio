@@ -65,20 +65,19 @@ async function assemble(read: Reader): Promise<Bundle> {
     }
   }
 
-  // Optional gene-set definitions (long format) for live ORA. Grouped by set_id.
+  // Optional gene-set definitions for live ORA. Compact format: one row per set,
+  // columns source,set_id,set_name,genes with genes "/"-joined.
   let genesets: GeneSetDef[] | undefined
   const gsText = await read('genesets.csv')
   if (gsText) {
-    const rows = Papa.parse<{ source: string; set_id: string; set_name: string; gene: string }>(
+    const rows = Papa.parse<{ source: string; set_id: string; set_name: string; genes: string }>(
       gsText.trim(), { header: true, skipEmptyLines: true }).data
-    const map = new Map<string, GeneSetDef>()
+    const list: GeneSetDef[] = []
     for (const r of rows) {
-      if (!r.set_id || !r.gene) continue
-      let g = map.get(r.set_id)
-      if (!g) { g = { source: r.source || '', id: r.set_id, name: r.set_name || r.set_id, genes: [] }; map.set(r.set_id, g) }
-      g.genes.push(String(r.gene))
+      if (!r.set_id || !r.genes) continue
+      list.push({ source: r.source || '', id: r.set_id, name: r.set_name || r.set_id, genes: String(r.genes).split('/').filter(Boolean) })
     }
-    if (map.size) genesets = [...map.values()]
+    if (list.length) genesets = list
   }
 
   return { meta, samples, counts, degByContrast, enrichmentByContrast, genesets }
