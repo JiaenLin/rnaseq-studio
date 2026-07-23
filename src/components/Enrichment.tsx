@@ -34,6 +34,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
   const [maxSize, setMaxSize] = useState(500)
   const [selSources, setSelSources] = useState<Set<string>>(new Set())
   const [termId, setTermId] = useState<string>('')
+  const [rankBy, setRankBy] = useState<'padj' | 'count'>('padj')
 
   const degMap = useMemo(() => buildDegMap(deg), [deg])
   const { rankMap, totalRanked } = useMemo(() => buildRankMap(deg), [deg])
@@ -74,9 +75,12 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
     [degUpper, sets, background, minSize, maxSize, selSources])
 
   const nDegInBg = useMemo(() => { let n = 0; for (const g of degUpper) if (background.has(g)) n++; return n }, [degUpper, background])
-  const top = results.slice(0, TOP_N)
+  const orderedResults = useMemo(
+    () => rankBy === 'count' ? [...results].sort((a, b) => b.count - a.count || a.padj - b.padj) : results,
+    [results, rankBy])
+  const top = orderedResults.slice(0, TOP_N)
   const bars = [...top].reverse().map(r => ({ id: r.id, description: r.name, count: r.count, padj: r.padj }))
-  const selected = results.find(r => r.id === termId) || results[0]
+  const selected = orderedResults.find(r => r.id === termId) || top[0]
 
   const toggleSource = (s: string) => setSelSources(prev => {
     const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n
@@ -97,12 +101,20 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
           {lib.map(l => <span key={l.source} className="text-slate-400">{l.source}: {l.sets.toLocaleString()} sets / {l.genes.toLocaleString()} genes</span>)}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Ctl label={`padj ≤ ${padjMax}`}>
-            <input type="range" min={0} max={0.25} step={0.005} value={padjMax} onChange={e => setPadjMax(+e.target.value)} className="w-full" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <Ctl label="padj ≤">
+            <div className="flex items-center gap-2">
+              <input type="range" min={0} max={0.25} step={0.005} value={Math.min(padjMax, 0.25)} onChange={e => setPadjMax(+e.target.value)} className="w-full" />
+              <input type="number" className="input w-20 py-1" step={0.001} min={0} max={1} value={padjMax}
+                onChange={e => setPadjMax(clamp(+e.target.value, 0, 1))} />
+            </div>
           </Ctl>
-          <Ctl label={`|log2FC| ≥ ${lfcMin.toFixed(2)}`}>
-            <input type="range" min={0} max={3} step={0.25} value={lfcMin} onChange={e => setLfcMin(+e.target.value)} className="w-full" />
+          <Ctl label="|log2FC| ≥">
+            <div className="flex items-center gap-2">
+              <input type="range" min={0} max={3} step={0.1} value={Math.min(lfcMin, 3)} onChange={e => setLfcMin(+e.target.value)} className="w-full" />
+              <input type="number" className="input w-20 py-1" step={0.1} min={0} value={lfcMin}
+                onChange={e => setLfcMin(clamp(+e.target.value, 0, 100))} />
+            </div>
           </Ctl>
           <Ctl label="direction">
             <select className="input w-full py-1" value={direction} onChange={e => setDirection(e.target.value as any)}>
@@ -117,6 +129,12 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
               <span className="text-slate-400">–</span>
               <input type="number" className="input w-20 py-1" value={maxSize} min={1} onChange={e => setMaxSize(+e.target.value || 1)} />
             </div>
+          </Ctl>
+          <Ctl label="rank by">
+            <select className="input w-full py-1" value={rankBy} onChange={e => setRankBy(e.target.value as any)}>
+              <option value="padj">adjusted p-value</option>
+              <option value="count">gene count</option>
+            </select>
           </Ctl>
         </div>
 
@@ -259,6 +277,7 @@ function buildRankMap(rows: DEGRow[]) {
   return { rankMap, totalRanked: scored.length }
 }
 
+const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
 const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 function fmtP(p: number | null | undefined): string {
   if (p == null || Number.isNaN(p)) return '—'

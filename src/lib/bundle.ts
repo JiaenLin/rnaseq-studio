@@ -14,9 +14,16 @@ function parseCsv<T>(text: string): T[] {
 }
 
 // Counts can be large; parse by hand into a typed array for compact, fast lookup.
+// Strip surrounding double-quotes (R's write.csv quotes character fields).
+// Counts fields never contain embedded commas, so a plain split is safe here.
+const unq = (s: string): string => {
+  const t = s.trim()
+  return t.length > 1 && t[0] === '"' && t[t.length - 1] === '"' ? t.slice(1, -1).replace(/""/g, '"') : t
+}
+
 function buildCounts(text: string): CountsMatrix {
   const lines = text.trim().split(/\r?\n/)
-  const header = lines[0].split(',')
+  const header = lines[0].split(',').map(unq)
   const hasName = /^(gene_name|symbol|name)$/i.test(header[1] ?? '')
   const sampleStart = hasName ? 2 : 1
   const samples = header.slice(sampleStart)
@@ -29,12 +36,12 @@ function buildCounts(text: string): CountsMatrix {
 
   for (let i = 0; i < N; i++) {
     const cells = lines[i + 1].split(',')
-    const id = cells[0]
-    const nm = hasName ? (cells[1] ?? '') : ''
+    const id = unq(cells[0])
+    const nm = hasName ? unq(cells[1] ?? '') : ''
     geneIds[i] = id
     geneNames[i] = nm
     const base = i * S
-    for (let j = 0; j < S; j++) values[base + j] = +cells[sampleStart + j] || 0
+    for (let j = 0; j < S; j++) values[base + j] = +unq(cells[sampleStart + j]) || 0
     index.set(id.toUpperCase(), i)
     if (nm) index.set(nm.toUpperCase(), i)
   }
