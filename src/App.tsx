@@ -8,14 +8,14 @@ import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
 import Enrichment from './components/Enrichment'
 
-type Tab = 'overview' | 'expression' | 'geneset' | 'volcano' | 'degs' | 'enrichment'
+type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'expression', label: 'Gene expression' },
-  { id: 'geneset', label: 'Gene sets' },
   { id: 'volcano', label: 'Volcano' },
   { id: 'degs', label: 'DEG table' },
   { id: 'enrichment', label: 'Enrichment' },
+  { id: 'geneset', label: 'Gene sets' },
 ]
 
 export default function App() {
@@ -104,14 +104,14 @@ export default function App() {
               <Overview bundle={bundle} onOpenContrast={id => { setContrastId(id); setTab('volcano') }} />}
             {tab === 'expression' &&
               <GeneExpression bundle={bundle} contrast={contrast} selectedGene={gene} onSelectGene={pickGene} />}
-            {tab === 'geneset' &&
-              <GeneSetExplorer bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'volcano' &&
               <Volcano bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'degs' &&
               <DEGTable bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'enrichment' &&
-              <Enrichment bundle={bundle} contrast={contrast} />}
+              <Enrichment bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
+            {tab === 'geneset' &&
+              <GeneSetExplorer bundle={bundle} contrast={contrast} />}
           </>
         )}
       </main>
