@@ -1,5 +1,10 @@
 # RNA-seq Studio
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Live app](https://img.shields.io/badge/demo-live-brightgreen)](https://jiaenlin.github.io/rnaseq-studio/)
+<!-- After the first Zenodo release, uncomment and fill in the DOI:
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX) -->
+
 **An interactive explorer for bulk RNA-seq results — right in your browser.**
 
 👉 **[Open the live app](https://jiaenlin.github.io/rnaseq-studio/)**
@@ -58,6 +63,11 @@ the DESeq2 pipeline (counts → differential expression → enrichment) and writ
 _(An interim reference exporter for the existing R pipeline lives in `scripts/export-bundle.R`.)_
 
 ---
+
+## How to cite
+
+If RNA-seq Studio is useful in your work, please cite it (see [`CITATION.cff`](CITATION.cff)).
+A citable DOI is minted per release via Zenodo; a software paper is in `paper/`.
 
 ## Develop
 

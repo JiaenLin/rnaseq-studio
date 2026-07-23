@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use RNA-seq Studio, please cite it as below."
+title: "RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results"
+abstract: >-
+  RNA-seq Studio is a fully client-side web application for interactively exploring
+  bulk RNA-seq differential-expression and enrichment results. It reads a small,
+  pipeline-agnostic "bundle" of files and renders gene-expression views, volcano
+  plots, DEG tables, tunable over-representation analysis, and user-defined gene-set
+  activity scores entirely in the browser, so data never leaves the user's device.
+authors:
+  - family-names: Lin
+    given-names: Jiaen
+type: software
+version: 1.0.0
+date-released: "2026-07-24"
+license: MIT
+repository-code: "https://github.com/JiaenLin/rnaseq-studio"
+url: "https://jiaenlin.github.io/rnaseq-studio/"
+keywords:
+  - RNA-seq
+  - differential expression
+  - gene set enrichment
+  - over-representation analysis
+  - data visualization
+  - privacy
+  - bioinformatics
+# After the first Zenodo release, add the DOI here and in README badges:
+# doi: 10.5281/zenodo.XXXXXXX
