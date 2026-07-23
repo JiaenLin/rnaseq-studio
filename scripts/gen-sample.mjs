@@ -141,6 +141,18 @@ writeFileSync(join(outDir, 'enrichment_KO_vs_WT.csv'),
     enrich.map(e => [e.source, e.method, e.id, `"${e.description}"`, e.direction, e.setSize, e.count,
       e.score.toFixed(3), e.pvalue.toExponential(3), e.padj.toExponential(3), e.geneID].join(','))))
 
+// genesets.csv (long format) — full memberships for live ORA. Each set = its
+// enrichment members (DE-biased) padded with random genes up to setSize.
+const gsRows = []
+for (const e of enrich) {
+  const members = new Set(e.geneID.split('/').filter(Boolean))
+  let guard = 0
+  const target = Math.min(e.setSize, anyPool.length)
+  while (members.size < target && guard < e.setSize * 6) { members.add(anyPool[Math.floor(rnd() * anyPool.length)]); guard++ }
+  for (const g of members) gsRows.push([e.source, e.id, `"${e.description}"`, g].join(','))
+}
+writeFileSync(join(outDir, 'genesets.csv'), csv(['source', 'set_id', 'set_name', 'gene'], gsRows))
+
 writeFileSync(join(outDir, 'meta.json'), JSON.stringify({
   schema: 1,
   project: 'Demo — KO vs WT (liver)',

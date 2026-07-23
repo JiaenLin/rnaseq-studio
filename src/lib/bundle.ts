@@ -1,6 +1,6 @@
 import Papa from 'papaparse'
 import type {
-  Bundle, BundleMeta, SampleRow, DEGRow, EnrichmentRow, CountsMatrix,
+  Bundle, BundleMeta, SampleRow, DEGRow, EnrichmentRow, CountsMatrix, GeneSetDef,
 } from '../types'
 
 // A Reader resolves a file name within a bundle to its text, or null if absent.
@@ -64,7 +64,24 @@ async function assemble(read: Reader): Promise<Bundle> {
       if (eText) enrichmentByContrast[c.id] = parseCsv<EnrichmentRow>(eText)
     }
   }
-  return { meta, samples, counts, degByContrast, enrichmentByContrast }
+
+  // Optional gene-set definitions (long format) for live ORA. Grouped by set_id.
+  let genesets: GeneSetDef[] | undefined
+  const gsText = await read('genesets.csv')
+  if (gsText) {
+    const rows = Papa.parse<{ source: string; set_id: string; set_name: string; gene: string }>(
+      gsText.trim(), { header: true, skipEmptyLines: true }).data
+    const map = new Map<string, GeneSetDef>()
+    for (const r of rows) {
+      if (!r.set_id || !r.gene) continue
+      let g = map.get(r.set_id)
+      if (!g) { g = { source: r.source || '', id: r.set_id, name: r.set_name || r.set_id, genes: [] }; map.set(r.set_id, g) }
+      g.genes.push(String(r.gene))
+    }
+    if (map.size) genesets = [...map.values()]
+  }
+
+  return { meta, samples, counts, degByContrast, enrichmentByContrast, genesets }
 }
 
 // Load a bundle served under a base URL (e.g. the bundled sample, or a hosted dir).

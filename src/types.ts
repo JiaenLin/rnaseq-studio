@@ -72,6 +72,15 @@ export interface EnrichmentRow {
   geneID?: string         // "/"-separated member genes, if provided
 }
 
+// Full gene-set definition (all members) — enables live, tunable ORA in the browser.
+// Loaded from an optional genesets.csv (long format: source,set_id,set_name,gene).
+export interface GeneSetDef {
+  source: string
+  id: string
+  name: string
+  genes: string[]
+}
+
 // The parsed, in-memory bundle the explorer works with.
 export interface Bundle {
   meta: BundleMeta
@@ -79,6 +88,7 @@ export interface Bundle {
   counts: CountsMatrix
   degByContrast: Record<string, DEGRow[]>
   enrichmentByContrast: Record<string, EnrichmentRow[]>
+  genesets?: GeneSetDef[]
 }
 
 // Column-oriented counts for fast per-gene lookup.

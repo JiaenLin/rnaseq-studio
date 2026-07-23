@@ -154,6 +154,34 @@ for (ct in cts) {
   counts_df <- cbind(counts_df, round(as.data.frame(nc), 3))
   write.csv(counts_df, file.path(outDir, "normalized_counts.csv"), row.names = FALSE)
 
+  # genesets.csv (optional) — full memberships for live ORA, via msigdbr,
+  # restricted to genes present in this dataset. Best-effort; robust to API renames.
+  ok <- FALSE
+  if (requireNamespace("msigdbr", quietly = TRUE)) {
+    ok <- tryCatch({
+      bgSym <- unique(toupper(unname(gn)))
+      d <- as.data.frame(msigdbr::msigdbr(species = "Homo sapiens"))
+      col <- function(cands) { for (c in cands) if (c %in% names(d)) return(c); NA }
+      nameCol <- col(c("gs_name")); symCol <- col(c("gene_symbol"))
+      collCol <- col(c("gs_collection", "gs_cat")); subCol <- col(c("gs_subcollection", "gs_subcat"))
+      coll <- d[[collCol]]; sub <- d[[subCol]]
+      src <- ifelse(coll == "H", "Hallmark",
+             ifelse(grepl("^CP:KEGG", sub), "KEGG",
+             ifelse(sub == "CP:REACTOME", "Reactome",
+             ifelse(sub == "CP:WIKIPATHWAYS", "WikiPathways",
+             ifelse(sub == "GO:BP", "GO:BP", NA)))))
+      keep <- !is.na(src) & toupper(d[[symCol]]) %in% bgSym
+      if (any(keep)) {
+        gs <- data.frame(source = src[keep], set_id = d[[nameCol]][keep],
+                         set_name = d[[nameCol]][keep], gene = d[[symCol]][keep], stringsAsFactors = FALSE)
+        write.csv(gs, file.path(outDir, "genesets.csv"), row.names = FALSE)
+        message("  [genesets] ", nrow(gs), " memberships across ", length(unique(gs$set_id)), " sets")
+        TRUE
+      } else FALSE
+    }, error = function(err) { message("  [genesets] skipped: ", conditionMessage(err)); FALSE })
+  }
+  if (!ok) message("  [genesets] not written (msigdbr unavailable/empty) — Custom ORA disabled for this bundle.")
+
   # meta.json
   meta <- list(schema = 1, project = project, species = species,
                created = format(Sys.Date()), engine = "desktop-R", control = control,
