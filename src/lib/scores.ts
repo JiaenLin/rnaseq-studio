@@ -20,6 +20,28 @@ export function computeSortedOrders(values: Float64Array, N: number, S: number):
   return orders
 }
 
+// Position (0 = highest expression) of every gene within every sample, derived
+// from the sorted orders. rankPos[i*S + j].
+export function computeRankPositions(orders: Int32Array[], N: number, S: number): Float32Array {
+  const pos = new Float32Array(N * S)
+  for (let j = 0; j < S; j++) { const ord = orders[j]; for (let p = 0; p < N; p++) pos[ord[p] * S + j] = p }
+  return pos
+}
+
+// Mean within-sample rank of a set's genes, normalized to [-0.5, 0.5]. Simple,
+// per-sample, rank-based (higher = set genes sit toward the highly-expressed end).
+export function meanRankScore(rows: number[], rankPos: Float32Array, N: number, S: number): number[] {
+  const m = rows.length
+  const out = new Array<number>(S).fill(0)
+  if (m === 0) return out
+  for (let j = 0; j < S; j++) {
+    let sum = 0
+    for (const i of rows) sum += N - rankPos[i * S + j] // top gene → N, bottom → 1
+    out[j] = (sum / m) / N - 0.5
+  }
+  return out
+}
+
 // Weighted rank running-sum enrichment score per sample.
 //   position p (0 = highest expression) has weight (N - p)^alpha
 //   P_hit(p)  = cumulative set-gene weight / total set weight

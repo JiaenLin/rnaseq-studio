@@ -3,7 +3,7 @@ import type { Bundle, Contrast, DEGRow } from '../types'
 import { conditionColors } from '../lib/palette'
 import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
-import { computeSortedOrders, rankRunningSum } from '../lib/scores'
+import { computeSortedOrders, computeRankPositions, meanRankScore, rankRunningSum } from '../lib/scores'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -30,7 +30,7 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   const [lfcMin, setLfcMin] = useState(1)
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
   const [selName, setSelName] = useState('')
-  const [scoreMethod, setScoreMethod] = useState<'runningsum' | 'meanz'>('runningsum')
+  const [scoreMethod, setScoreMethod] = useState<'runningsum' | 'meanrank' | 'meanz'>('runningsum')
   const colors = conditionColors(meta.conditions)
 
   const degMap = useMemo(() => {
@@ -116,16 +116,19 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   const nGenes = counts.geneIds.length
   // Descending expression ordering per sample (memoized per bundle; one sort/sample).
   const orders = useMemo(() => computeSortedOrders(counts.values, nGenes, S), [counts, nGenes, S])
+  const rankPos = useMemo(() => computeRankPositions(orders, nGenes, S), [orders, nGenes, S])
   const meanZ = (rows: number[]) => {
     const z = rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
     const m = new Array(S).fill(0)
     if (z.length) for (let j = 0; j < S; j++) { let a = 0; for (const zr of z) a += zr[j]; m[j] = a / z.length }
     return m
   }
-  const moduleBySet = useMemo(() => sets.map(s => ({
-    name: s.name,
-    moduleByCol: scoreMethod === 'runningsum' ? rankRunningSum(s.rows, orders, nGenes) : meanZ(s.rows),
-  })), [sets, scoreMethod, orders, counts, S, nGenes])
+  const scoreSet = (rows: number[]) =>
+    scoreMethod === 'runningsum' ? rankRunningSum(rows, orders, nGenes)
+      : scoreMethod === 'meanrank' ? meanRankScore(rows, rankPos, nGenes, S)
+        : meanZ(rows)
+  const moduleBySet = useMemo(() => sets.map(s => ({ name: s.name, moduleByCol: scoreSet(s.rows) })),
+    [sets, scoreMethod, orders, rankPos, counts, S, nGenes])
 
   const boxTraces = useMemo(() => {
     const per: Record<string, { x: string[]; y: number[] }> = {}
@@ -251,19 +254,22 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
                 score method:
                 <select className="input py-1" value={scoreMethod} onChange={e => setScoreMethod(e.target.value as any)}>
                   <option value="runningsum">rank running-sum (weighted, stable)</option>
+                  <option value="meanrank">mean rank (rank-based)</option>
                   <option value="meanz">mean z-score</option>
                 </select>
               </label>
             </div>
             <Plot data={boxTraces} downloadName={`set_activity_${scoreMethod}_${contrast.id}`} layout={{
               margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
-              yaxis: { title: scoreMethod === 'runningsum' ? 'enrichment score' : 'module score (mean z)', zeroline: true },
+              yaxis: { title: scoreMethod === 'runningsum' ? 'enrichment score' : scoreMethod === 'meanrank' ? 'rank score' : 'module score (mean z)', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
             }} style={{ height: 340 }} />
             <p className="mt-1 text-xs text-slate-400">
               {scoreMethod === 'runningsum'
-                ? 'Rank running-sum: within each sample, genes are ranked by expression and we walk the ranked list accumulating a weighted (rank^0.25) hit-minus-miss difference — an ssGSEA-style enrichment score computed per sample, independent of the other samples (stable with few replicates). Positive = the set sits toward the highly-expressed end.'
-                : 'mean z-score: per sample, the mean of each set gene’s z-score (standardized across samples) — simple but unstable when replicates are few.'}
+                ? 'Rank running-sum: within each sample, genes are ranked by expression and we walk the ranked list accumulating a weighted (rank^0.25) hit-minus-miss difference — an ssGSEA-style enrichment score, per sample and independent of the others (stable with few replicates). Positive = the set sits toward the highly-expressed end.'
+                : scoreMethod === 'meanrank'
+                  ? 'Mean rank: within each sample, genes are ranked by expression and the set’s normalized mean rank is taken (per sample, rank-based, stable). Higher = set genes are more highly expressed. Unweighted counterpart of the running-sum.'
+                  : 'mean z-score: per sample, the mean of each set gene’s z-score (standardized across samples) — simple but unstable when replicates are few.'}
               {' '}Complementary, expression-based activity view (the enrichment above is DEG-based).
             </p>
           </div>
