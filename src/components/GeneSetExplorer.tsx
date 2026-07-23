@@ -3,7 +3,7 @@ import type { Bundle, Contrast, DEGRow } from '../types'
 import { conditionColors } from '../lib/palette'
 import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
-import { computeSampleRanks, singscore } from '../lib/scores'
+import { computeSortedOrders, rankRunningSum } from '../lib/scores'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -30,7 +30,7 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   const [lfcMin, setLfcMin] = useState(1)
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
   const [selName, setSelName] = useState('')
-  const [scoreMethod, setScoreMethod] = useState<'singscore' | 'meanz'>('singscore')
+  const [scoreMethod, setScoreMethod] = useState<'runningsum' | 'meanz'>('runningsum')
   const colors = conditionColors(meta.conditions)
 
   const degMap = useMemo(() => {
@@ -114,8 +114,8 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   }, [counts.samples, bundle.samples, meta.conditions])
 
   const nGenes = counts.geneIds.length
-  // Within-sample gene ranks for singscore (memoized per bundle; ~one sort/sample).
-  const ranks = useMemo(() => computeSampleRanks(counts.values, nGenes, S), [counts, nGenes, S])
+  // Descending expression ordering per sample (memoized per bundle; one sort/sample).
+  const orders = useMemo(() => computeSortedOrders(counts.values, nGenes, S), [counts, nGenes, S])
   const meanZ = (rows: number[]) => {
     const z = rows.map(r => zscore(Array.from(counts.values.subarray(r * S, r * S + S)).map(v => Math.log2(v + 1))))
     const m = new Array(S).fill(0)
@@ -124,8 +124,8 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   }
   const moduleBySet = useMemo(() => sets.map(s => ({
     name: s.name,
-    moduleByCol: scoreMethod === 'singscore' ? singscore(s.rows, ranks, nGenes, S) : meanZ(s.rows),
-  })), [sets, scoreMethod, ranks, counts, S, nGenes])
+    moduleByCol: scoreMethod === 'runningsum' ? rankRunningSum(s.rows, orders, nGenes) : meanZ(s.rows),
+  })), [sets, scoreMethod, orders, counts, S, nGenes])
 
   const boxTraces = useMemo(() => {
     const per: Record<string, { x: string[]; y: number[] }> = {}
@@ -250,19 +250,19 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
               <label className="flex items-center gap-1.5 text-sm text-slate-500">
                 score method:
                 <select className="input py-1" value={scoreMethod} onChange={e => setScoreMethod(e.target.value as any)}>
-                  <option value="singscore">singscore (rank-based, stable)</option>
+                  <option value="runningsum">rank running-sum (weighted, stable)</option>
                   <option value="meanz">mean z-score</option>
                 </select>
               </label>
             </div>
             <Plot data={boxTraces} downloadName={`set_activity_${scoreMethod}_${contrast.id}`} layout={{
               margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
-              yaxis: { title: scoreMethod === 'singscore' ? 'singscore' : 'module score (mean z)', zeroline: true },
+              yaxis: { title: scoreMethod === 'runningsum' ? 'enrichment score' : 'module score (mean z)', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
             }} style={{ height: 340 }} />
             <p className="mt-1 text-xs text-slate-400">
-              {scoreMethod === 'singscore'
-                ? 'singscore: per sample, genes are ranked within that sample and the set’s normalized mean rank is taken — a single-sample score, independent of the other samples (stable with few replicates).'
+              {scoreMethod === 'runningsum'
+                ? 'Rank running-sum: within each sample, genes are ranked by expression and we walk the ranked list accumulating a weighted (rank^0.25) hit-minus-miss difference — an ssGSEA-style enrichment score computed per sample, independent of the other samples (stable with few replicates). Positive = the set sits toward the highly-expressed end.'
                 : 'mean z-score: per sample, the mean of each set gene’s z-score (standardized across samples) — simple but unstable when replicates are few.'}
               {' '}Complementary, expression-based activity view (the enrichment above is DEG-based).
             </p>
