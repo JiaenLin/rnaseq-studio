@@ -312,7 +312,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
                     <tr key={g.id} className="cursor-pointer border-t border-slate-100 hover:bg-indigo-50/60 dark:border-slate-800 dark:hover:bg-slate-800"
                       onClick={() => onSelectGene(g.name)}>
                       <td className="px-3 py-1.5 font-medium">{g.name}</td>
-                      <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>{d ? d.log2FoldChange.toFixed(2) : '—'}</td>
+                      <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>{d && d.log2FoldChange != null ? d.log2FoldChange.toFixed(2) : '—'}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{comb != null ? comb.toFixed(2) : '—'}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
                       <td className="px-3 py-1.5">{sig(d, contrast, true)}</td>

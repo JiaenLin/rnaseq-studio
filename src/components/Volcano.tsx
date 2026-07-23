@@ -13,7 +13,9 @@ type Cat = 'up' | 'down' | 'ns'
 
 export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
   const rows = bundle.degByContrast[contrast.id] || []
-  const [padjThr, setPadjThr] = useState(contrast.padj_threshold ?? 0.05)
+  // Threshold is held in −log10(padj) units so it lines up with the y-axis.
+  const [negLogThr, setNegLogThr] = useState(-Math.log10(contrast.padj_threshold ?? 0.05))
+  const padjThr = Math.pow(10, -negLogThr)
   const [lfcThr, setLfcThr] = useState(contrast.lfc_threshold ?? 1)
 
   const cats = useMemo(() => {
@@ -71,11 +73,12 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
         <span className="pill bg-red-100 text-red-700">▲ {nUp} up in {contrast.numerator}</span>
         <span className="pill bg-blue-100 text-blue-700">▼ {nDown} up in {contrast.denominator}</span>
         <label className="ml-auto flex items-center gap-2 text-slate-500">
-          padj ≤
-          <input type="range" min={0} max={0.25} step={0.005} value={Math.min(padjThr, 0.25)}
-            onChange={e => setPadjThr(+e.target.value)} />
-          <input type="number" className="input w-20 py-0.5" step={0.001} min={0} max={1} value={padjThr}
-            onChange={e => setPadjThr(clamp(+e.target.value, 0, 1))} />
+          −log10 padj ≥
+          <input type="range" min={0} max={10} step={0.1} value={Math.min(negLogThr, 10)}
+            onChange={e => setNegLogThr(+e.target.value)} />
+          <input type="number" className="input w-20 py-0.5" step={0.1} min={0} value={+negLogThr.toFixed(2)}
+            onChange={e => setNegLogThr(clamp(+e.target.value, 0, 400))} />
+          <span className="font-mono text-xs text-slate-400">padj {padjThr < 1e-3 ? padjThr.toExponential(1) : padjThr.toFixed(3)}</span>
         </label>
         <label className="flex items-center gap-2 text-slate-500">
           |log2FC| ≥
@@ -92,7 +95,7 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
         onPointClick={p => p?.customdata && onSelectGene(p.customdata)}
       />
       <p className="mt-2 text-center text-xs text-slate-400">
-        Click any point to open that gene in the Expression tab · dashed lines = padj {padjThr} and log2FC 0
+        Click any point to open that gene in the Expression tab · horizontal line = −log10 padj {negLogThr.toFixed(2)}, vertical = log2FC 0
       </p>
     </div>
   )

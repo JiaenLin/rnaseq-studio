@@ -58,7 +58,7 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
     const s = new Set<string>()
     for (const r of deg) {
       if (r.padj == null || r.padj > padjMax) continue
-      if (Math.abs(r.log2FoldChange) < lfcMin) continue
+      if (r.log2FoldChange == null || Math.abs(r.log2FoldChange) < lfcMin) continue
       if (direction === 'up' && r.log2FoldChange <= 0) continue
       if (direction === 'down' && r.log2FoldChange >= 0) continue
       s.add((r.gene_name || r.gene_id).toUpperCase())
@@ -236,7 +236,7 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
                       <tr key={g} onClick={() => onSelectGene(g)}
                         className="cursor-pointer border-t border-slate-100 hover:bg-indigo-50/60 dark:border-slate-800 dark:hover:bg-slate-800">
                         <td className="px-3 py-1.5 font-medium">{g}{!d && <span className="ml-1 text-xs text-slate-400">(not tested)</span>}</td>
-                        <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>{d ? d.log2FoldChange.toFixed(2) : '—'}</td>
+                        <td className={`px-3 py-1.5 text-right font-mono ${d && d.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>{d && d.log2FoldChange != null ? d.log2FoldChange.toFixed(2) : '—'}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
                         <td className="px-3 py-1.5 text-right font-mono">{comb != null ? comb.toFixed(2) : '—'}</td>
                         <td className="px-3 py-1.5 text-right font-mono text-slate-500">{rank ? `${rank} / ${totalRanked}` : '—'}</td>

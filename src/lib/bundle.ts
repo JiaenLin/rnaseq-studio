@@ -13,6 +13,28 @@ function parseCsv<T>(text: string): T[] {
   return res.data as T[]
 }
 
+// R writes missing values as the literal "NA"; PapaParse keeps that as a string.
+// Coerce numeric fields to a real number or null so downstream math/formatting
+// never sees a non-number (e.g. "NA".toFixed()).
+const toNum = (v: unknown): number | null => {
+  if (v == null) return null
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  const s = String(v).trim()
+  if (s === '' || s === 'NA' || s === 'NaN' || s === 'NULL' || s === 'NA_real_') return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+function coerceDeg(rows: DEGRow[]): DEGRow[] {
+  for (const r of rows) {
+    r.baseMean = toNum(r.baseMean) as number
+    r.log2FoldChange = toNum(r.log2FoldChange) as number
+    r.lfcSE = toNum(r.lfcSE)
+    r.pvalue = toNum(r.pvalue)
+    r.padj = toNum(r.padj)
+  }
+  return rows
+}
+
 // Counts can be large; parse by hand into a typed array for compact, fast lookup.
 // Strip surrounding double-quotes (R's write.csv quotes character fields).
 // Counts fields never contain embedded commas, so a plain split is safe here.
@@ -65,7 +87,7 @@ async function assemble(read: Reader): Promise<Bundle> {
   const enrichmentByContrast: Record<string, EnrichmentRow[]> = {}
   for (const c of meta.contrasts) {
     const degText = await read(c.deg_file)
-    if (degText) degByContrast[c.id] = parseCsv<DEGRow>(degText)
+    if (degText) degByContrast[c.id] = coerceDeg(parseCsv<DEGRow>(degText))
     if (c.enrichment_file) {
       const eText = await read(c.enrichment_file)
       if (eText) enrichmentByContrast[c.id] = parseCsv<EnrichmentRow>(eText)
