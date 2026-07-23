@@ -57,9 +57,11 @@ full typed spec is in [`src/types.ts`](src/types.ts).
 RNA-seq Studio is only the **viewer**. Bundles are produced by a separate analysis app that runs
 the DESeq2 pipeline (counts → differential expression → enrichment) and writes the files above.
 
-> **📦 Analysis app:** _coming soon_ — repository link will go here.
+> **📦 Analysis app — [RNA-seq Lab](https://jiaenlin.github.io/rnaseq-lab/)**
+> ([source](https://github.com/JiaenLin/rnaseq-lab)): run **limma-voom** or **DESeq2** on your
+> counts entirely in the browser (via webR) and get a bundle to open here.
 
-_(An interim reference exporter for the existing R pipeline lives in `scripts/export-bundle.R`.)_
+_(An interim reference exporter for the existing R pipeline also lives in `scripts/export-bundle.R`.)_
 
 ---
 
