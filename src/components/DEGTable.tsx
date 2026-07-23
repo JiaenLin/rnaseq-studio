@@ -76,9 +76,9 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
               <Th label="Gene" k="gene_name" sort={sort} asc={asc} onClick={clickSort} />
               <Th label="Base mean" k="baseMean" sort={sort} asc={asc} onClick={clickSort} num />
               <Th label="log2FC" k="log2FoldChange" sort={sort} asc={asc} onClick={clickSort} num />
-              <Th label="Combined" k="combined" sort={sort} asc={asc} onClick={clickSort} num />
               <Th label="p-value" k="pvalue" sort={sort} asc={asc} onClick={clickSort} num />
               <Th label="padj" k="padj" sort={sort} asc={asc} onClick={clickSort} num />
+              <Th label="Combined" k="combined" sort={sort} asc={asc} onClick={clickSort} num />
             </tr>
           </thead>
           <tbody>
@@ -94,9 +94,9 @@ export default function DEGTable({ bundle, contrast, onSelectGene }: Props) {
                 <td className={`px-3 py-1.5 text-right font-mono ${r.log2FoldChange > 0 ? 'text-red-600' : 'text-blue-600'}`}>
                   {fmt(r.log2FoldChange, 2)}
                 </td>
-                <td className="px-3 py-1.5 text-right font-mono">{fmt(combinedScore(r.log2FoldChange, r.pvalue), 2)}</td>
                 <td className="px-3 py-1.5 text-right font-mono text-slate-500">{fmtP(r.pvalue)}</td>
                 <td className="px-3 py-1.5 text-right font-mono">{fmtP(r.padj)}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{fmt(combinedScore(r.log2FoldChange, r.pvalue), 2)}</td>
               </tr>
             ))}
           </tbody>

@@ -21,6 +21,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   const S = counts.samples.length
   const [text, setText] = useState('')
   const [log2, setLog2] = useState(true)
+  const [focused, setFocused] = useState(false)
   const colors = conditionColors(meta.conditions)
 
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
@@ -57,7 +58,11 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     const hits: string[] = []
     for (let i = 0; i < counts.geneNames.length && hits.length < 10; i++) {
       const nm = counts.geneNames[i], id = counts.geneIds[i]
-      if ((nm && nm.toUpperCase().startsWith(q)) || id.toUpperCase().startsWith(q)) hits.push(nm || id)
+      const NM = nm ? nm.toUpperCase() : '', ID = id.toUpperCase()
+      // Skip a gene that is already fully typed — otherwise its own name keeps
+      // matching its prefix and the dropdown never closes.
+      if (NM === q || ID === q) continue
+      if (NM.startsWith(q) || ID.startsWith(q)) hits.push(nm || id)
     }
     return hits
   }, [lastTok, counts])
@@ -96,18 +101,24 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
         placeholder="Gene, or a list — e.g.  TP53   or   TP53, MYC, IL6, STAT1"
         value={text}
         onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && suggestions[0]) { e.preventDefault(); pickSuggestion(suggestions[0]) } }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && suggestions[0]) { e.preventDefault(); pickSuggestion(suggestions[0]) }
+          else if (e.key === 'Escape') setFocused(false)
+        }}
       />
       <label className="flex items-center gap-1.5 text-sm text-slate-500">
         <input type="checkbox" checked={log2} onChange={e => setLog2(e.target.checked)} /> log2 scale
       </label>
       <button className="btn" onClick={() => setText('TP53, MYC, IL6, STAT1, CDKN1A, BAX')}>Load list</button>
       <button className="btn" onClick={() => setText('')}>Clear</button>
-      {suggestions.length > 0 && (
+      {focused && suggestions.length > 0 && (
         <ul className="absolute left-0 top-11 z-10 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
           {suggestions.map(s => (
             <li key={s}>
               <button className="block w-full px-3 py-1.5 text-left text-sm hover:bg-indigo-50 dark:hover:bg-slate-700"
+                onMouseDown={e => e.preventDefault()}
                 onClick={() => pickSuggestion(s)}>{s}</button>
             </li>
           ))}
