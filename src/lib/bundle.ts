@@ -1,4 +1,5 @@
 import Papa from 'papaparse'
+import { unzipSync } from 'fflate'
 import type {
   Bundle, BundleMeta, SampleRow, DEGRow, EnrichmentRow, CountsMatrix, GeneSetDef,
 } from '../types'
@@ -131,6 +132,25 @@ export function loadBundleFromFiles(files: FileList | File[]): Promise<Bundle> {
   return assemble(async (name) => {
     const f = map.get(name.toLowerCase())
     return f ? await f.text() : null
+  })
+}
+
+// Load a bundle from a .zip file (entries matched by basename, so a zipped
+// folder or a flat zip both work). Decompressed entirely in the browser.
+export async function loadBundleFromZip(file: File): Promise<Bundle> {
+  const buf = new Uint8Array(await file.arrayBuffer())
+  const entries = unzipSync(buf)
+  const map = new Map<string, Uint8Array>()
+  for (const path of Object.keys(entries)) {
+    if (path.endsWith('/')) continue // directory entry
+    if (path.includes('__MACOSX')) continue // macOS zip cruft
+    const base = (path.split('/').pop() || '').toLowerCase()
+    if (base && !map.has(base)) map.set(base, entries[path])
+  }
+  const dec = new TextDecoder()
+  return assemble(async (name) => {
+    const d = map.get(name.toLowerCase())
+    return d ? dec.decode(d) : null
   })
 }
 

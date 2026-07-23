@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Bundle } from './types'
-import { loadBundleFromUrl, loadBundleFromFiles } from './lib/bundle'
+import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import Overview from './components/Overview'
 import GeneExpression from './components/GeneExpression'
@@ -27,7 +27,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const zipRef = useRef<HTMLInputElement>(null)
 
   const adopt = useCallback((b: Bundle) => {
     setBundle(b)
@@ -53,12 +55,34 @@ export default function App() {
     finally { setLoading(false) }
   }
 
+  const loadZip = async (f: File) => {
+    setLoading(true)
+    try { adopt(await loadBundleFromZip(f)) }
+    catch (e: any) { setError(`Could not read ${f.name}: ${e?.message || e}`) }
+    finally { setLoading(false) }
+  }
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false)
+    const zip = Array.from(e.dataTransfer.files).find(f => f.name.toLowerCase().endsWith('.zip'))
+    if (zip) loadZip(zip)
+    else if (e.dataTransfer.files.length) setError('Drop a .zip bundle, or use “Open your bundle”.')
+  }
+
   const pickGene = (g: string) => { setGene(g); setTab('expression') }
 
   const contrast = bundle?.meta.contrasts.find(c => c.id === contrastId) ?? bundle?.meta.contrasts[0]
 
   return (
-    <div className="mx-auto flex min-h-full max-w-6xl flex-col px-4">
+    <div className="relative mx-auto flex min-h-full max-w-6xl flex-col px-4"
+      onDragOver={e => { e.preventDefault(); if (!dragOver) setDragOver(true) }}
+      onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false) }}
+      onDrop={onDrop}>
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-2 z-40 grid place-items-center rounded-xl border-2 border-dashed border-indigo-400 bg-indigo-50/80 text-lg font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+          Drop a .zip bundle to open it
+        </div>
+      )}
       <header className="flex flex-wrap items-center gap-3 py-4">
         <div className="flex items-center gap-2">
           <span className="grid h-9 w-9 place-items-center rounded-lg bg-indigo-500 font-bold text-white">R</span>
@@ -74,8 +98,11 @@ export default function App() {
               {bundle.meta.contrasts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           )}
-          <button className="btn btn-primary" onClick={() => fileRef.current?.click()}>⭱ Open your bundle</button>
+          <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
+          <button className="btn" onClick={() => fileRef.current?.click()} title="Open an unzipped bundle folder">folder…</button>
           <button className="btn" onClick={() => setShowHelp(true)} title="What is a bundle & how to make one">?</button>
+          <input ref={zipRef} type="file" accept=".zip,application/zip" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) loadZip(f); e.target.value = '' }} />
           <input ref={fileRef} type="file" className="hidden" multiple
             onChange={e => onUpload(e.target.files)}
             {...({ webkitdirectory: '', directory: '' } as any)} />
@@ -84,9 +111,9 @@ export default function App() {
 
       {bundle?.meta.engine === 'sample-generator' && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
-          <span>👋 This is a <b>demo dataset</b>. Open your own result bundle to explore your data — it never leaves your browser.</span>
-          <button className="btn ml-auto py-1" onClick={() => fileRef.current?.click()}>⭱ Open your bundle</button>
-          <button className="btn py-1" onClick={() => setShowHelp(true)}>How to make one</button>
+          <span>👋 This is a <b>demo dataset</b>. Drop a <b>.zip</b> bundle anywhere (or use the button) to explore your data — it never leaves your browser.</span>
+          <button className="btn ml-auto py-1" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
+          <button className="btn py-1" onClick={() => setShowHelp(true)}>Format</button>
         </div>
       )}
 
@@ -146,11 +173,11 @@ function HelpModal({ onClose }: { onClose: () => void }) {
         </div>
         <p className="text-sm text-slate-500">
           RNA-seq Studio is a viewer: it reads a <b>result bundle</b> produced by your analysis pipeline and renders it
-          entirely in your browser — <b>nothing is uploaded</b>. Any tool that emits the format below will work. Click
-          <b> ⭱ Open your bundle</b> and pick the bundle folder.
+          entirely in your browser — <b>nothing is uploaded</b>. Any tool that emits the format below will work.
+          <b> Drop a .zip</b> anywhere on the page (or use <b>Open bundle</b>); an unzipped folder works too.
         </p>
 
-        <h3 className="mt-4 text-sm font-semibold uppercase tracking-wide text-slate-500">Bundle = a folder of files</h3>
+        <h3 className="mt-4 text-sm font-semibold uppercase tracking-wide text-slate-500">Bundle = these files (zipped, or a folder)</h3>
         <div className="mt-2 overflow-x-auto rounded-lg border border-slate-100 dark:border-slate-800">
           <table className="w-full text-sm">
             <tbody className="[&_td]:px-3 [&_td]:py-1.5 [&_tr]:border-t [&_tr]:border-slate-100 dark:[&_tr]:border-slate-800">
