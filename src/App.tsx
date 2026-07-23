@@ -101,7 +101,7 @@ export default function App() {
           <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
           <button className="btn" onClick={() => fileRef.current?.click()} title="Open an unzipped bundle folder">folder…</button>
           <button className="btn" onClick={() => setShowHelp(true)} title="What is a bundle & how to make one">?</button>
-          <input ref={zipRef} type="file" accept=".zip,application/zip" className="hidden"
+          <input ref={zipRef} type="file" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) loadZip(f); e.target.value = '' }} />
           <input ref={fileRef} type="file" className="hidden" multiple
             onChange={e => onUpload(e.target.files)}
