@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "project": "Demo — KO vs WT (liver)",
+  "species": "human",
+  "created": "2026-07-23",
+  "engine": "sample-generator",
+  "control": "WT",
+  "conditions": [
+    "WT",
+    "KO"
+  ],
+  "gene_id_type": "ensembl",
+  "counts_unit": "DESeq2 normalized (median-of-ratios)",
+  "n_genes": 3000,
+  "n_samples": 8,
+  "contrasts": [
+    {
+      "id": "KO_vs_WT",
+      "numerator": "KO",
+      "denominator": "WT",
+      "label": "KO vs WT",
+      "deg_file": "deg_KO_vs_WT.csv",
+      "enrichment_file": "enrichment_KO_vs_WT.csv",
+      "n_deg": 318,
+      "padj_threshold": 0.05,
+      "lfc_threshold": 1
+    }
+  ]
+}

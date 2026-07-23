@@ -1,0 +1,38 @@
+source,method,id,description,direction,setSize,count,score,pvalue,padj
+GO:BP,ORA,GOBP0001,"inflammatory response",down,195,42,2.002,1.830e-3,5.489e-3
+GO:BP,ORA,GOBP0002,"cell cycle",up,159,19,3.946,1.499e-3,4.497e-3
+GO:BP,ORA,GOBP0003,"apoptotic process",up,246,15,2.024,9.728e-4,2.918e-3
+GO:BP,ORA,GOBP0004,"immune response",down,210,27,2.070,2.368e-4,7.105e-4
+GO:BP,ORA,GOBP0005,"angiogenesis",up,41,15,4.535,6.480e-5,1.944e-4
+GO:BP,ORA,GOBP0006,"DNA repair",up,288,20,3.568,1.514e-2,4.543e-2
+GO:BP,ORA,GOBP0007,"T cell activation",down,281,40,4.122,1.488e-6,4.463e-6
+GO:BP,ORA,GOBP0008,"response to hypoxia",up,155,38,1.941,5.674e-7,1.702e-6
+GO:BP,ORA,GOBP0009,"cytokine production",up,61,43,4.428,6.623e-8,1.987e-7
+GO:BP,ORA,GOBP0010,"extracellular matrix organization",down,288,14,4.981,3.128e-5,9.384e-5
+KEGG,ORA,KEGG0011,"Cytokine-cytokine receptor interaction",down,225,40,1.173,4.443e-7,1.333e-6
+KEGG,ORA,KEGG0012,"p53 signaling pathway",up,143,10,1.978,1.835e-7,5.504e-7
+KEGG,ORA,KEGG0013,"Cell cycle",up,271,22,4.264,2.564e-4,7.692e-4
+KEGG,ORA,KEGG0014,"PI3K-Akt signaling",down,73,30,3.965,1.189e-7,3.566e-7
+KEGG,ORA,KEGG0015,"Apoptosis",up,58,41,1.233,1.306e-2,3.917e-2
+KEGG,ORA,KEGG0016,"TNF signaling pathway",up,114,8,1.046,2.481e-7,7.444e-7
+KEGG,ORA,KEGG0017,"JAK-STAT signaling",down,102,39,2.651,3.982e-5,1.195e-4
+KEGG,ORA,KEGG0018,"HIF-1 signaling",up,127,17,1.428,6.154e-5,1.846e-4
+Reactome,ORA,Reactome0019,"Interferon Signaling",down,147,18,4.573,4.848e-6,1.454e-5
+Reactome,ORA,Reactome0020,"Cell Cycle Checkpoints",up,259,15,1.650,5.788e-5,1.736e-4
+Reactome,ORA,Reactome0021,"Signaling by Interleukins",up,197,46,2.749,3.215e-5,9.645e-5
+Reactome,ORA,Reactome0022,"Programmed Cell Death",down,69,33,2.830,1.284e-3,3.851e-3
+Reactome,ORA,Reactome0023,"Extracellular matrix organization",up,159,17,2.051,4.469e-2,1.341e-1
+Reactome,ORA,Reactome0024,"DNA Double-Strand Break Repair",up,211,10,3.049,2.023e-5,6.070e-5
+WikiPathways,ORA,WikiPathways0025,"Apoptosis",down,198,47,2.886,6.519e-3,1.956e-2
+WikiPathways,ORA,WikiPathways0026,"Cell cycle",up,240,46,1.930,4.626e-5,1.388e-4
+WikiPathways,ORA,WikiPathways0027,"TNF-alpha signaling",up,270,14,4.726,6.393e-6,1.918e-5
+WikiPathways,ORA,WikiPathways0028,"VEGFA-VEGFR2 pathway",down,132,25,4.040,2.261e-3,6.783e-3
+WikiPathways,ORA,WikiPathways0029,"Inflammatory Response Pathway",up,186,10,4.540,1.924e-6,5.771e-6
+GSEA:H,GSEA,GSEAH0030,"HALLMARK_TNFA_SIGNALING_VIA_NFKB",down,74,17,-1.589,2.401e-2,7.204e-2
+GSEA:H,GSEA,GSEAH0031,"HALLMARK_INFLAMMATORY_RESPONSE",up,211,58,-2.580,1.081e-5,3.242e-5
+GSEA:H,GSEA,GSEAH0032,"HALLMARK_HYPOXIA",up,219,104,2.538,2.158e-3,6.474e-3
+GSEA:H,GSEA,GSEAH0033,"HALLMARK_P53_PATHWAY",up,137,73,1.608,2.184e-3,6.551e-3
+GSEA:H,GSEA,GSEAH0034,"HALLMARK_APOPTOSIS",down,231,62,-2.536,1.369e-2,4.106e-2
+GSEA:H,GSEA,GSEAH0035,"HALLMARK_INTERFERON_GAMMA_RESPONSE",down,102,32,-2.175,6.385e-5,1.915e-4
+GSEA:H,GSEA,GSEAH0036,"HALLMARK_E2F_TARGETS",up,167,51,-1.725,3.640e-6,1.092e-5
+GSEA:H,GSEA,GSEAH0037,"HALLMARK_G2M_CHECKPOINT",down,123,48,2.438,9.113e-5,2.734e-4
