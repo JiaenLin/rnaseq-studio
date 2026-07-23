@@ -26,6 +26,7 @@ export default function App() {
   const [contrastId, setContrastId] = useState<string>('')
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const adopt = useCallback((b: Bundle) => {
@@ -73,12 +74,21 @@ export default function App() {
               {bundle.meta.contrasts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           )}
-          <button className="btn" onClick={() => fileRef.current?.click()}>⭱ Open analysis folder</button>
+          <button className="btn btn-primary" onClick={() => fileRef.current?.click()}>⭱ Open your bundle</button>
+          <button className="btn" onClick={() => setShowHelp(true)} title="What is a bundle & how to make one">?</button>
           <input ref={fileRef} type="file" className="hidden" multiple
             onChange={e => onUpload(e.target.files)}
             {...({ webkitdirectory: '', directory: '' } as any)} />
         </div>
       </header>
+
+      {bundle?.meta.engine === 'sample-generator' && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
+          <span>👋 This is a <b>demo dataset</b>. Open your own result bundle to explore your data — it never leaves your browser.</span>
+          <button className="btn ml-auto py-1" onClick={() => fileRef.current?.click()}>⭱ Open your bundle</button>
+          <button className="btn py-1" onClick={() => setShowHelp(true)}>How to make one</button>
+        </div>
+      )}
 
       {bundle && (
         <nav className="flex flex-wrap gap-1 border-b border-slate-200 pb-2 dark:border-slate-700">
@@ -120,6 +130,43 @@ export default function App() {
       <footer className="border-t border-slate-200 py-3 text-center text-xs text-slate-400 dark:border-slate-700">
         Runs locally in your browser · your data never leaves this device
       </footer>
+
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+    </div>
+  )
+}
+
+function HelpModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
+      <div className="card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
+        <div className="mb-3 flex items-start justify-between">
+          <h2 className="text-lg font-semibold">Open your own result bundle</h2>
+          <button className="btn py-1" onClick={onClose}>✕</button>
+        </div>
+        <p className="text-sm text-slate-500">
+          RNA-seq Studio is a viewer: it reads a <b>result bundle</b> produced by your analysis pipeline and renders it
+          entirely in your browser — <b>nothing is uploaded</b>. Any tool that emits the format below will work. Click
+          <b> ⭱ Open your bundle</b> and pick the bundle folder.
+        </p>
+
+        <h3 className="mt-4 text-sm font-semibold uppercase tracking-wide text-slate-500">Bundle = a folder of files</h3>
+        <div className="mt-2 overflow-x-auto rounded-lg border border-slate-100 dark:border-slate-800">
+          <table className="w-full text-sm">
+            <tbody className="[&_td]:px-3 [&_td]:py-1.5 [&_tr]:border-t [&_tr]:border-slate-100 dark:[&_tr]:border-slate-800">
+              <tr><td className="font-mono">meta.json</td><td>project, species, control, and the list of contrasts</td></tr>
+              <tr><td className="font-mono">samples.csv</td><td><span className="font-mono text-xs">sample, condition, [covariates…]</span></td></tr>
+              <tr><td className="font-mono">normalized_counts.csv</td><td><span className="font-mono text-xs">gene_id, [gene_name,] &lt;sample1&gt;, &lt;sample2&gt;, …</span></td></tr>
+              <tr><td className="font-mono">deg_&lt;contrast&gt;.csv</td><td><span className="font-mono text-xs">gene_id, gene_name, baseMean, log2FoldChange, lfcSE, pvalue, padj</span></td></tr>
+              <tr><td className="font-mono">genesets.csv <span className="text-slate-400">(optional)</span></td><td><span className="font-mono text-xs">source, set_id, set_name, genes</span> — enables live ORA</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">
+          One <code>deg_&lt;contrast&gt;.csv</code> per contrast (named in <code>meta.json</code>). Missing values may be <code>NA</code>.
+          Counts should be normalized (e.g. DESeq2 median-of-ratios). The full typed spec lives in the project's <code>src/types.ts</code> / README.
+        </p>
+      </div>
     </div>
   )
 }
