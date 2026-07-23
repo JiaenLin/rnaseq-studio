@@ -2,8 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Live app](https://img.shields.io/badge/demo-live-brightgreen)](https://jiaenlin.github.io/rnaseq-studio/)
-<!-- After the first Zenodo release, uncomment and fill in the DOI:
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX) -->
+[![DOI](https://zenodo.org/badge/1310113114.svg)](https://zenodo.org/badge/latestdoi/1310113114)
 
 **An interactive explorer for bulk RNA-seq results — right in your browser.**
 
