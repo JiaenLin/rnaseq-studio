@@ -264,14 +264,18 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
               yaxis: { title: scoreMethod === 'runningsum' ? 'enrichment score' : scoreMethod === 'meanrank' ? 'rank score' : 'module score (mean z)', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
             }} style={{ height: 340 }} />
-            <p className="mt-1 text-xs text-slate-400">
-              {scoreMethod === 'runningsum'
-                ? 'Rank running-sum: within each sample, genes are ranked by expression and we walk the ranked list accumulating a weighted (rank^0.25) hit-minus-miss difference — an ssGSEA-style enrichment score, per sample and independent of the others (stable with few replicates). Positive = the set sits toward the highly-expressed end.'
-                : scoreMethod === 'meanrank'
-                  ? 'Mean rank: within each sample, genes are ranked by expression and the set’s normalized mean rank is taken (per sample, rank-based, stable). Higher = set genes are more highly expressed. Unweighted counterpart of the running-sum.'
-                  : 'mean z-score: per sample, the mean of each set gene’s z-score (standardized across samples) — simple but unstable when replicates are few.'}
-              {' '}Complementary, expression-based activity view (the enrichment above is DEG-based).
-            </p>
+            <dl className="mt-2 space-y-1 text-xs text-slate-400">
+              <Method active={scoreMethod === 'runningsum'} name="Rank running-sum (default)">
+                rewards a set when its genes rank near the top (highly expressed) in a sample, giving the very top genes extra weight. Per-sample &amp; stable.
+              </Method>
+              <Method active={scoreMethod === 'meanrank'} name="Mean rank">
+                the set's average expression rank in each sample — higher = more highly expressed. Simplest rank score; per-sample &amp; stable.
+              </Method>
+              <Method active={scoreMethod === 'meanz'} name="Mean z-score">
+                each gene's distance from its across-sample average, averaged over the set. Easy to read but wobbles with few replicates.
+              </Method>
+            </dl>
+            <p className="mt-2 text-xs text-slate-400">All three are per-sample; higher = the set is more active in that sample. (The enrichment table above is DEG-based instead.)</p>
           </div>
         </>
       )}
@@ -281,6 +285,15 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="flex items-center gap-1.5 text-slate-500"><span className="whitespace-nowrap">{label}</span>{children}</label>
+}
+
+function Method({ active, name, children }: { active: boolean; name: string; children: React.ReactNode }) {
+  return (
+    <div className={active ? 'text-slate-600 dark:text-slate-300' : ''}>
+      <dt className="inline font-semibold">{active ? '▸ ' : ''}{name}:</dt>{' '}
+      <dd className="inline">{children}</dd>
+    </div>
+  )
 }
 const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
 function fmtP(p: number | null | undefined): string {
