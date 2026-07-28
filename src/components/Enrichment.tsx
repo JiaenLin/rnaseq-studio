@@ -10,8 +10,6 @@ interface Props {
   onSelectGene: (gene: string) => void
 }
 
-const TOP_N = 15
-
 // Enrichment = live, tunable over-representation analysis (ORA) only.
 export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
   if (!bundle.genesets?.length) {
@@ -35,6 +33,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
   const [selSources, setSelSources] = useState<Set<string>>(new Set())
   const [termId, setTermId] = useState<string>('')
   const [rankBy, setRankBy] = useState<'padj' | 'count'>('padj')
+  const [topN, setTopN] = useState(15)
 
   const degMap = useMemo(() => buildDegMap(deg), [deg])
   const { rankMap, totalRanked } = useMemo(() => buildRankMap(deg), [deg])
@@ -78,7 +77,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
   const orderedResults = useMemo(
     () => rankBy === 'count' ? [...results].sort((a, b) => b.count - a.count || a.padj - b.padj) : results,
     [results, rankBy])
-  const top = orderedResults.slice(0, TOP_N)
+  const top = orderedResults.slice(0, topN)
   const bars = [...top].reverse().map(r => ({ id: r.id, description: r.name, count: r.count, padj: r.padj }))
   const selected = orderedResults.find(r => r.id === termId) || top[0]
 
@@ -101,7 +100,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
           {lib.map(l => <span key={l.source} className="text-slate-400">{l.source}: {l.sets.toLocaleString()} sets / {l.genes.toLocaleString()} genes</span>)}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Ctl label="padj ≤">
             <div className="flex items-center gap-2">
               <input type="range" min={0} max={0.25} step={0.005} value={Math.min(padjMax, 0.25)} onChange={e => setPadjMax(+e.target.value)} className="w-full" />
@@ -135,6 +134,10 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
               <option value="padj">adjusted p-value</option>
               <option value="count">gene count</option>
             </select>
+          </Ctl>
+          <Ctl label="terms shown">
+            <input type="number" className="input w-20 py-1" value={topN} min={1} max={100}
+              onChange={e => setTopN(clamp(Math.round(+e.target.value), 1, 100))} />
           </Ctl>
         </div>
 
@@ -245,10 +248,12 @@ function barTrace(bars: { id: string; description: string; count: number; padj: 
   return {
     type: 'bar', orientation: 'h',
     x: bars.map(t => t.count),
-    y: bars.map(t => truncate(t.description, 44)),
+    // Full name, word-wrapped onto multiple lines so long MSigDB terms aren't cut off.
+    y: bars.map(t => wrapLabel(t.description, 40)),
     customdata: bars.map(t => t.id),
-    text: bars.map(t => `padj ${fmtP(t.padj)}`),
-    hovertemplate: '%{y}<br>count %{x}<br>%{text}<extra></extra>',
+    // Hover shows the complete, un-wrapped name plus stats.
+    text: bars.map(t => `${t.description}<br>padj ${fmtP(t.padj)}`),
+    hovertemplate: '%{text}<br>count %{x}<extra></extra>',
     marker: {
       color: bars.map(t => -Math.log10(Math.max(t.padj ?? 1, 1e-300))),
       colorscale: 'YlOrRd', showscale: true,
@@ -278,7 +283,22 @@ function buildRankMap(rows: DEGRow[]) {
 }
 
 const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
-const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+// Word-wrap a long label to <=width per line (breaking on _ / - and spaces, hard-
+// wrapping any single run that is still too long) using <br> for Plotly tick text.
+function wrapLabel(s: string, width: number): string {
+  if (s.length <= width) return s
+  const lines: string[] = []
+  let line = ''
+  for (const tok of s.split(/(?=[_/\- ])/)) {
+    if (line && (line + tok).length > width) { lines.push(line); line = tok.replace(/^[_/\- ]/, '') }
+    else line += tok
+  }
+  if (line) lines.push(line)
+  return lines.flatMap(l => {
+    if (l.length <= width) return [l]
+    return l.match(new RegExp(`.{1,${width}}`, 'g')) || [l]
+  }).join('<br>')
+}
 function fmtP(p: number | null | undefined): string {
   if (p == null || Number.isNaN(p)) return '—'
   if (p === 0) return '<1e-300'

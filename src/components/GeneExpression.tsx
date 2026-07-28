@@ -22,6 +22,9 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   const [text, setText] = useState('')
   const [log2, setLog2] = useState(true)
   const [focused, setFocused] = useState(false)
+  // Suppresses the dropdown right after a pick, so a fully-typed gene doesn't keep
+  // re-opening its own suggestion. Cleared on the next keystroke.
+  const [suppress, setSuppress] = useState(false)
   const colors = conditionColors(meta.conditions)
 
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
@@ -55,22 +58,28 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   const suggestions = useMemo(() => {
     const q = lastTok.toUpperCase()
     if (q.length < 1) return []
-    const hits: string[] = []
-    for (let i = 0; i < counts.geneNames.length && hits.length < 10; i++) {
+    let exact: string | null = null
+    const pref: { label: string; len: number }[] = []
+    for (let i = 0; i < counts.geneNames.length; i++) {
       const nm = counts.geneNames[i], id = counts.geneIds[i]
       const NM = nm ? nm.toUpperCase() : '', ID = id.toUpperCase()
-      // Skip a gene that is already fully typed — otherwise its own name keeps
-      // matching its prefix and the dropdown never closes.
-      if (NM === q || ID === q) continue
-      if (NM.startsWith(q) || ID.startsWith(q)) hits.push(nm || id)
+      const label = nm || id
+      // An exact hit always ranks first (SOX2 before SOX21); prefix hits follow,
+      // shortest name first so the closest completion sits nearest the top.
+      if (NM === q || ID === q) { exact = label; continue }
+      if (NM.startsWith(q)) pref.push({ label, len: NM.length })
+      else if (ID.startsWith(q)) pref.push({ label, len: ID.length })
     }
-    return hits
+    pref.sort((a, b) => a.len - b.len || a.label.localeCompare(b.label))
+    const out = exact ? [exact, ...pref.map(p => p.label)] : pref.map(p => p.label)
+    return out.slice(0, 10)
   }, [lastTok, counts])
 
   const pickSuggestion = (g: string) => {
     const p = text.split(',')
     p[p.length - 1] = (p.length > 1 ? ' ' : '') + g
     setText(p.join(',').replace(/^\s+/, ''))
+    setSuppress(true)
   }
 
   const tokens = useMemo(
@@ -100,7 +109,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
         className="input w-96 max-w-full"
         placeholder="Gene, or a list — e.g.  TP53   or   TP53, MYC, IL6, STAT1"
         value={text}
-        onChange={e => setText(e.target.value)}
+        onChange={e => { setText(e.target.value); setSuppress(false) }}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
         onKeyDown={e => {
@@ -113,7 +122,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
       </label>
       <button className="btn" onClick={() => setText('TP53, MYC, IL6, STAT1, CDKN1A, BAX')}>Load list</button>
       <button className="btn" onClick={() => setText('')}>Clear</button>
-      {focused && suggestions.length > 0 && (
+      {focused && !suppress && suggestions.length > 0 && (
         <ul className="absolute left-0 top-11 z-10 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
           {suggestions.map(s => (
             <li key={s}>
