@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
+import type { GroupSel } from '../lib/design'
+import { displayOrder, orderSamples } from '../lib/design'
 import { conditionColors } from '../lib/palette'
 import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
@@ -10,6 +12,7 @@ import Plot from '../lib/Plot'
 interface Props {
   bundle: Bundle
   contrast: Contrast
+  sel: GroupSel
   onSelectGene: (gene: string) => void
 }
 
@@ -22,7 +25,7 @@ Apoptosis: BAX, BCL2, CDKN1A, PTEN, SOD2`
 // For each user-defined gene set: its per-gene DEG statistics, how many members
 // are DEGs, and an over-representation (ORA) test as an activity readout — plus
 // a per-sample module score for cross-condition comparison.
-export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Props) {
+export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }: Props) {
   const { counts, meta } = bundle
   const S = counts.samples.length
   const deg = bundle.degByContrast[contrast.id] || []
@@ -105,14 +108,10 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   }).sort((a, b) => (b.comb ?? -Infinity) - (a.comb ?? -Infinity)), [selSet, degMap, rankMap])
 
   // ── per-sample module score (secondary activity view) ──
-  const ordered = useMemo(() => {
-    const sc: Record<string, string> = {}
-    for (const s of bundle.samples) sc[s.sample] = s.condition
-    const colBy = new Map(counts.samples.map((s, j) => [s, j] as const))
-    return [...counts.samples]
-      .sort((a, b) => (meta.conditions.indexOf(sc[a] ?? '') - meta.conditions.indexOf(sc[b] ?? '')) || a.localeCompare(b))
-      .map(s => ({ sample: s, col: colBy.get(s)!, cond: sc[s] ?? '?' }))
-  }, [counts.samples, bundle.samples, meta.conditions])
+  // Restricted to the groups chosen in the comparison bar, control first.
+  const ordered = useMemo(
+    () => orderSamples(counts.samples, bundle.samples, sel),
+    [counts.samples, bundle.samples, sel])
 
   const nGenes = counts.geneIds.length
   // The full-genome sort is only needed for the rank-based methods AND only once
@@ -150,7 +149,7 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
     for (const s of moduleBySet) for (const o of ordered) {
       (per[o.cond] ||= { x: [], y: [] }); per[o.cond].x.push(s.name); per[o.cond].y.push(s.moduleByCol[o.col])
     }
-    return meta.conditions.filter(c => per[c]).map(c => ({
+    return displayOrder(sel).filter(c => per[c]).map(c => ({
       type: 'box', name: c, x: per[c].x, y: per[c].y, boxpoints: 'all', jitter: 0.4, pointpos: 0,
       marker: { color: colors[c], size: 6 }, line: { color: colors[c] },
     }))

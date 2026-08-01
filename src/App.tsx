@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
-import type { Bundle } from './types'
+import type { Bundle, Contrast } from './types'
+import type { GroupSel } from './lib/design'
+import { contrastMismatch, defaultSelection, matchingContrast } from './lib/design'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import Overview from './components/Overview'
@@ -34,6 +36,7 @@ export default function App() {
   const [contrastId, setContrastId] = useState<string>('')
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
+  const [sel, setSel] = useState<GroupSel>({ control: '', groups: [] })
   const [showHelp, setShowHelp] = useState(false)
   const [showStart, setShowStart] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -43,10 +46,25 @@ export default function App() {
   const adopt = useCallback((b: Bundle) => {
     setBundle(b)
     setContrastId(b.meta.contrasts[0]?.id ?? '')
+    setSel(defaultSelection(b.meta, b.meta.contrasts[0]))
     setGene(null)
     setTab('overview')
     setError(null)
   }, [])
+
+  // Switching contrast moves the reference with it; the chosen arms are kept.
+  const pickContrast = (id: string) => {
+    setContrastId(id)
+    const c = bundle?.meta.contrasts.find(x => x.id === id)
+    if (c) setSel(s => ({ control: c.denominator, groups: s.groups.filter(g => g !== c.denominator) }))
+  }
+
+  // Narrowing to a single arm selects that contrast, when the bundle has it.
+  const pickSel = (next: GroupSel) => {
+    setSel(next)
+    const m = bundle ? matchingContrast(next, bundle.meta.contrasts) : undefined
+    if (m && m.id !== contrastId) setContrastId(m.id)
+  }
 
   // Deliberately NOT auto-loaded: a dataset already on screen at first paint
   // reads as "your data", and every number on it is someone else's.
@@ -106,7 +124,7 @@ export default function App() {
         <div className="ml-auto flex items-center gap-2">
           {/* On the landing screen the actions live in the hero, not up here. */}
           {bundle && bundle.meta.contrasts.length > 1 && (
-            <select className="input" value={contrastId} onChange={e => setContrastId(e.target.value)}>
+            <select className="input" value={contrastId} onChange={e => pickContrast(e.target.value)}>
               {bundle.meta.contrasts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           )}
@@ -137,6 +155,11 @@ export default function App() {
           <button className="btn ml-auto py-1" onClick={() => zipRef.current?.click()}>⭱ Open your bundle</button>
           <button className="btn py-1" onClick={() => { setBundle(null); setError(null) }}>Exit demo</button>
         </div>
+      )}
+
+      {/* Only worth showing when there is something to choose between. */}
+      {bundle && contrast && bundle.meta.conditions.length > 2 && (
+        <GroupBar bundle={bundle} contrast={contrast} sel={sel} onChange={pickSel} />
       )}
 
       {bundle && (
@@ -171,7 +194,7 @@ export default function App() {
             {tab === 'overview' &&
               <Overview bundle={bundle} onOpenContrast={id => { setContrastId(id); setTab('volcano') }} />}
             {tab === 'expression' &&
-              <GeneExpression bundle={bundle} contrast={contrast} selectedGene={gene} onSelectGene={pickGene} />}
+              <GeneExpression bundle={bundle} contrast={contrast} sel={sel} selectedGene={gene} onSelectGene={pickGene} />}
             {tab === 'volcano' &&
               <Volcano bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'degs' &&
@@ -179,7 +202,7 @@ export default function App() {
             {tab === 'enrichment' &&
               <Enrichment bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'geneset' &&
-              <GeneSetExplorer bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
+              <GeneSetExplorer bundle={bundle} contrast={contrast} sel={sel} onSelectGene={pickGene} />}
             {tab === 'methods' && <Methods bundle={bundle} contrast={contrast} />}
           </ErrorBoundary>
         )}
@@ -198,6 +221,82 @@ export default function App() {
           onFormat={() => { setShowStart(false); setShowHelp(true) }}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Choose the reference group and which arms to look at. One selection, read by
+ * every expression view, so a 23-arm design can be narrowed to the three arms a
+ * given question is about.
+ */
+function GroupBar({ bundle, contrast, sel, onChange }: {
+  bundle: Bundle; contrast: Contrast; sel: GroupSel; onChange: (s: GroupSel) => void
+}) {
+  const all = bundle.meta.conditions
+  const nSamples = (c: string) => bundle.samples.filter(s => s.condition === c).length
+  const mismatch = contrastMismatch(sel, contrast)
+
+  const toggle = (c: string) => onChange({
+    ...sel,
+    groups: sel.groups.includes(c) ? sel.groups.filter(g => g !== c) : [...sel.groups, c],
+  })
+
+  return (
+    <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/50">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Control</span>
+          <select
+            className="input py-1" value={sel.control}
+            onChange={e => onChange({
+              control: e.target.value,
+              groups: sel.groups.filter(g => g !== e.target.value),
+            })}
+          >
+            {all.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <button className="btn py-1 text-xs"
+            onClick={() => onChange({ control: sel.control, groups: all.filter(c => c !== sel.control) })}>
+            All groups
+          </button>
+          <button className="btn py-1 text-xs"
+            onClick={() => onChange({ control: contrast.denominator, groups: [contrast.numerator] })}>
+            Just this contrast
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Compare</span>
+        {all.filter(c => c !== sel.control).map(c => {
+          const on = sel.groups.includes(c)
+          return (
+            <button
+              key={c}
+              onClick={() => toggle(c)}
+              title={`${nSamples(c)} samples`}
+              className={`pressable rounded-md border px-2 py-0.5 text-xs transition ${
+                on
+                  ? 'border-indigo-400 bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+                  : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-slate-700'}`}
+            >{c}</button>
+          )
+        })}
+      </div>
+
+      <p className="mt-2 text-xs text-slate-400">
+        <b>{sel.groups.length + 1}</b> of {all.length} groups shown, against <b>{sel.control}</b> —
+        applies to gene expression, gene sets and the heatmap.
+        {mismatch && (
+          <span className="text-amber-600 dark:text-amber-400">
+            {' '}DEG statistics still come from <b>{contrast.label}</b>, which this selection does not match.
+          </span>
+        )}
+      </p>
     </div>
   )
 }

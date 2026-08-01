@@ -6,6 +6,9 @@
 // matched meta.conditions and those samples vanished from every plot without
 // any error. Identifiers must stay text; only numeric columns get coerced.
 import { assemble } from '../src/lib/bundle.ts'
+import {
+  contrastMismatch, defaultSelection, displayOrder, matchingContrast, orderSamples,
+} from '../src/lib/design.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -71,6 +74,33 @@ check('enrichment description stays text', enr[0].description, 'SET_ONE')
 console.log('\nCOUNTS MATRIX')
 check('counts parsed for every sample', bundle.counts.samples.length, CONDITIONS.length * 2)
 check('gene lookup by symbol works', bundle.counts.index.get('GPX4'), 1)
+
+console.log('\nGROUP SELECTION')
+{
+  const meta = bundle.meta
+  const def = defaultSelection(meta, meta.contrasts[0])
+  check('default reference is the contrast denominator', def.control, '517E2')
+  check('default shows every other group', def.groups.length, CONDITIONS.length - 1)
+  check('control is drawn first', displayOrder(def)[0], '517E2')
+  check('control never repeats in the group list', displayOrder(def).filter(c => c === '517E2').length, 1)
+
+  const narrow = { control: '517E2', groups: ['517E2+RSL3'] }
+  const shown = orderSamples(bundle.counts.samples, bundle.samples, narrow)
+  check('narrowing drops unselected samples', shown.length, 4)      // 2 groups x 2 reps
+  check('samples come back control-first',
+    [...new Set(shown.map(s => s.cond))], ['517E2', '517E2+RSL3'])
+  check('every returned col indexes the counts matrix',
+    shown.every(s => s.col >= 0 && s.col < bundle.counts.samples.length), true)
+
+  check('one experimental group resolves to its contrast',
+    matchingContrast(narrow, meta.contrasts)?.id, '517E2+RSL3_vs_517E2')
+  check('several groups resolve to no single contrast',
+    matchingContrast({ control: '517E2', groups: ['517E2+RSL3', '0755'] }, meta.contrasts), undefined)
+  check('a mismatched reference is reported',
+    contrastMismatch({ control: '0755', groups: ['517E2+RSL3'] }, meta.contrasts[0]), true)
+  check('a matching selection is not reported as mismatched',
+    contrastMismatch(narrow, meta.contrasts[0]), false)
+}
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll bundle tests passed\n')
 process.exit(failed ? 1 : 0)

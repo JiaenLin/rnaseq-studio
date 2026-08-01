@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
+import type { GroupSel } from '../lib/design'
+import { displayOrder, orderSamples } from '../lib/design'
 import { conditionColors, SIG_COLORS } from '../lib/palette'
 import { combinedScore, mean, welchP, zscore } from '../lib/stats'
 import Plot from '../lib/Plot'
@@ -7,6 +9,7 @@ import Plot from '../lib/Plot'
 interface Props {
   bundle: Bundle
   contrast: Contrast
+  sel: GroupSel
   selectedGene: string | null
   onSelectGene: (gene: string) => void
 }
@@ -20,7 +23,7 @@ const MAX_LIST_BOX = 24
 // Single gene OR a gene list, in one tab. One gene → detailed box plot with group
 // means + DEG panel. Many genes → expression heatmap + a per-gene DEG-statistics
 // bar plot + a per-gene DEG table.
-export default function GeneExpression({ bundle, contrast, selectedGene, onSelectGene }: Props) {
+export default function GeneExpression({ bundle, contrast, sel, selectedGene, onSelectGene }: Props) {
   const { counts, meta } = bundle
   const S = counts.samples.length
   const [text, setText] = useState('')
@@ -39,18 +42,10 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
   useEffect(() => { if (selectedGene) setText(selectedGene) }, [selectedGene])
 
-  const sampleCond = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const s of bundle.samples) m[s.sample] = s.condition
-    return m
-  }, [bundle.samples])
-
-  const ordered = useMemo(() => {
-    const colByName = new Map(counts.samples.map((s, j) => [s, j] as const))
-    return [...counts.samples]
-      .sort((a, b) => (meta.conditions.indexOf(sampleCond[a] ?? '') - meta.conditions.indexOf(sampleCond[b] ?? '')) || a.localeCompare(b))
-      .map(s => ({ sample: s, col: colByName.get(s)!, cond: sampleCond[s] ?? '?' }))
-  }, [counts.samples, sampleCond, meta.conditions])
+  // Restricted to the groups chosen in the comparison bar, control first.
+  const ordered = useMemo(
+    () => orderSamples(counts.samples, bundle.samples, sel),
+    [counts.samples, bundle.samples, sel])
 
   const degMap = useMemo(() => {
     const m = new Map<string, DEGRow>()
@@ -167,10 +162,10 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     const vals = geneVals(g.row)
     const byCond: Record<string, number[]> = {}
     ordered.forEach(o => { (byCond[o.cond] ||= []).push(vals[o.col]) })
-    const order = meta.conditions.filter(c => byCond[c]?.length)
+    const order = displayOrder(sel).filter(c => byCond[c]?.length)
     // Same relative transform as the per-gene panel: every sample ÷ the control
     // mean, so the control group averages exactly 1.
-    const ctrlMean = mean(byCond[contrast.denominator] ?? [])
+    const ctrlMean = mean(byCond[sel.control] ?? [])
     const toY = (v: number) =>
       relative ? (ctrlMean > 0 ? v / ctrlMean : NaN) : (log2 ? Math.log2(v + 1) : v)
     const traces = order.map(c => ({
@@ -257,10 +252,10 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   if (zAll.length) for (let j = 0; j < S; j++) { let s = 0; for (const z of zAll) s += z[j]; moduleByCol[j] = s / zAll.length }
   const moduleByCond: Record<string, number[]> = {}
   ordered.forEach(o => { (moduleByCond[o.cond] ||= []).push(moduleByCol[o.col]) })
-  const denScores = moduleByCond[contrast.denominator] || []
+  const denScores = moduleByCond[sel.control] || []
   const numScores = moduleByCond[contrast.numerator] || []
   const moduleStat = denScores.length >= 2 && numScores.length >= 2 ? welchP(denScores, numScores) : null
-  const moduleTraces = meta.conditions.filter(c => moduleByCond[c]?.length).map(c => ({
+  const moduleTraces = displayOrder(sel).filter(c => moduleByCond[c]?.length).map(c => ({
     type: 'box', name: c, y: moduleByCond[c], boxpoints: 'all', jitter: 0.5, pointpos: 0, boxmean: true,
     marker: { color: colors[c], size: 7 }, line: { color: colors[c] }, fillcolor: colors[c] + '22',
   }))
@@ -273,7 +268,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   // high-expressed one. Built as a single Plotly figure via grid.pattern
   // 'independent' rather than N <Plot> instances.
   const boxGenes = matched.slice(0, MAX_LIST_BOX)
-  const condOrder = meta.conditions.filter(c => ordered.some(o => o.cond === c))
+  const condOrder = displayOrder(sel).filter(c => ordered.some(o => o.cond === c))
 
   // Plotly names the first axis "x"/"xaxis" and only later ones "x2"/"xaxis2";
   // "xaxis1" is not a recognized layout key and would be silently dropped.
@@ -296,7 +291,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     const byC: Record<string, number[]> = {}
     ordered.forEach(o => { (byC[o.cond] ||= []).push(vals[o.col]) })
     // Reference = the contrast's denominator (the control group).
-    const ctrlMean = mean(byC[contrast.denominator] ?? [])
+    const ctrlMean = mean(byC[sel.control] ?? [])
     // A gene with no expression in the control has no meaningful fold change;
     // NaN leaves that panel empty rather than drawing an Infinity spike.
     const toY = (v: number) =>
