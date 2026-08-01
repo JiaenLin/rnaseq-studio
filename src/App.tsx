@@ -37,6 +37,9 @@ export default function App() {
   const [contrastId, setContrastId] = useState<string>('')
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
+  // Held here, not in the tab, so switching tabs or comparisons never discards
+  // a typed gene list.
+  const [geneText, setGeneText] = useState('')
   const [sel, setSel] = useState<GroupSel>({ control: '', groups: [] })
   // Which selected arm the DEG statistics describe (control is the reference).
   const [focus, setFocus] = useState<string>('')
@@ -58,6 +61,7 @@ export default function App() {
     setSel(s)
     setFocus(first?.numerator ?? s.groups[0] ?? '')
     setGene(null)
+    setGeneText('')
     setTab('overview')
     setError(null)
   }, [])
@@ -269,13 +273,14 @@ export default function App() {
           />
         )}
         {!loading && bundle && contrast && (
-          <ErrorBoundary key={`${tab}:${contrast.id}`}>
+          <ErrorBoundary key={tab}>
             {tab === 'overview' && <Overview bundle={viewBundle!} />}
             {/* Expression needs no statistics, so it stays available while a pair
                 is uncomputed; its DEG-derived panels hide themselves. */}
             {tab === 'expression' && (
               <GeneExpression
                 bundle={viewBundle!} contrast={contrast} sel={sel} hasStats={!pending}
+                text={geneText} onText={setGeneText}
                 selectedGene={gene} onSelectGene={pickGene} />
             )}
             {/* Everything below is statistics. With none for this pair, showing

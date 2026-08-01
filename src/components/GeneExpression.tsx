@@ -12,6 +12,9 @@ interface Props {
   sel: GroupSel
   /** False while the selected pair has no DESeq2 result — hide DEG panels. */
   hasStats: boolean
+  /** The gene query lives in App so it survives tab and contrast changes. */
+  text: string
+  onText: (t: string) => void
   selectedGene: string | null
   onSelectGene: (gene: string) => void
 }
@@ -25,10 +28,11 @@ const MAX_LIST_BOX = 24
 // Single gene OR a gene list, in one tab. One gene → detailed box plot with group
 // means + DEG panel. Many genes → expression heatmap + a per-gene DEG-statistics
 // bar plot + a per-gene DEG table.
-export default function GeneExpression({ bundle, contrast, sel, hasStats, selectedGene, onSelectGene }: Props) {
+export default function GeneExpression({
+  bundle, contrast, sel, hasStats, text, onText, selectedGene, onSelectGene,
+}: Props) {
   const { counts, meta } = bundle
   const S = counts.samples.length
-  const [text, setText] = useState('')
   const [log2, setLog2] = useState(true)
   const [focused, setFocused] = useState(false)
   // Suppresses the dropdown right after a pick, so a fully-typed gene doesn't keep
@@ -42,7 +46,7 @@ export default function GeneExpression({ bundle, contrast, sel, hasStats, select
   const colors = conditionColors(meta.conditions)
 
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
-  useEffect(() => { if (selectedGene) setText(selectedGene) }, [selectedGene])
+  useEffect(() => { if (selectedGene) onText(selectedGene) }, [selectedGene])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restricted to the groups chosen in the comparison bar, control first.
   const ordered = useMemo(
@@ -84,7 +88,7 @@ export default function GeneExpression({ bundle, contrast, sel, hasStats, select
   const pickSuggestion = (g: string) => {
     const p = text.split(',')
     p[p.length - 1] = (p.length > 1 ? ' ' : '') + g
-    setText(p.join(',').replace(/^\s+/, ''))
+    onText(p.join(',').replace(/^\s+/, ''))
     setSuppress(true)
   }
 
@@ -118,7 +122,7 @@ export default function GeneExpression({ bundle, contrast, sel, hasStats, select
         className="input w-96 max-w-full"
         placeholder="Gene, or a list — e.g.  TP53   or   TP53, MYC, IL6, STAT1"
         value={text}
-        onChange={e => { setText(e.target.value); setSuppress(false) }}
+        onChange={e => { onText(e.target.value); setSuppress(false) }}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
         onKeyDown={e => {
@@ -137,8 +141,8 @@ export default function GeneExpression({ bundle, contrast, sel, hasStats, select
           relative expression to control
         </label>
       )}
-      <button className="btn" onClick={() => setText('TP53, MYC, IL6, STAT1, CDKN1A, BAX')}>Load list</button>
-      <button className="btn" onClick={() => setText('')}>Clear</button>
+      <button className="btn" onClick={() => onText('TP53, MYC, IL6, STAT1, CDKN1A, BAX')}>Load list</button>
+      <button className="btn" onClick={() => onText('')}>Clear</button>
       {focused && !suppress && suggestions.length > 0 && (
         <ul className="absolute left-0 top-11 z-10 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
           {suggestions.map(s => (
