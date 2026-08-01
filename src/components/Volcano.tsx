@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Bundle, Contrast } from '../types'
 import { SIG_COLORS } from '../lib/palette'
+import { reportDe, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -17,6 +18,10 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
   const [negLogThr, setNegLogThr] = useState(-Math.log10(contrast.padj_threshold ?? 0.05))
   const padjThr = Math.pow(10, -negLogThr)
   const [lfcThr, setLfcThr] = useState(contrast.lfc_threshold ?? 1)
+
+  // These are the significance cutoffs a manuscript reports — hand them to the
+  // Methods tab so it never has to guess.
+  useReport(() => reportDe({ padjThr, lfcThr }), `${padjThr}|${lfcThr}`)
 
   const cats = useMemo(() => {
     const groups: Record<Cat, { x: number[]; y: number[]; text: string[] }> = {

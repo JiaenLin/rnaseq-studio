@@ -4,6 +4,7 @@ import { conditionColors } from '../lib/palette'
 import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
 import { computeSortedOrders, computeRankPositions, meanRankScore, rankRunningSum } from '../lib/scores'
+import { reportSets, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -116,6 +117,12 @@ export default function GeneSetExplorer({ bundle, contrast, onSelectGene }: Prop
   const nGenes = counts.geneIds.length
   // The full-genome sort is only needed for the rank-based methods AND only once
   // gene sets exist — computing it eagerly on mount froze large datasets (78k genes).
+  // Tell the Methods tab which scoring method and thresholds are in play.
+  useReport(
+    () => reportSets({ nSets: sets.length, scoreMethod, padjMax, lfcMin, direction }),
+    [sets.length, scoreMethod, padjMax, lfcMin, direction].join('|'),
+  )
+
   const needScores = sets.length > 0 && scoreMethod !== 'meanz'
   const orders = useMemo(() => needScores ? computeSortedOrders(counts.values, nGenes, S) : [],
     [needScores, counts, nGenes, S])

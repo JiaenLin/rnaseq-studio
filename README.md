@@ -25,6 +25,8 @@ sets. Everything runs client-side — **your data never leaves your device** (no
   direction and watch enriched pathways update; drill into a term's genes and their stats.
 - **Gene sets** — define your own sets and get their DEG overlap, an ORA activity readout, and
   a per-sample module score (rank running-sum, mean rank, or mean z-score).
+- **Methods** — a draft Methods paragraph for your manuscript, written from the cutoffs you
+  actually set on the other tabs. Change a threshold and the text follows; copy or download it.
 - Every chart exports to **PNG**.
 
 ## Using it

@@ -8,6 +8,7 @@ import GeneSetExplorer from './components/GeneSetExplorer'
 import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
 import Enrichment from './components/Enrichment'
+import Methods from './components/Methods'
 
 const DOI_URL = 'https://doi.org/10.5281/zenodo.21514152'
 // The two upstream apps that produce a bundle, by what the user already has.
@@ -15,7 +16,7 @@ const LAB_URL = 'https://jiaenlin.github.io/rnaseq-lab/'
 const SERVICE_URL = 'https://jiaenlin.github.io/rnaseq-service/'
 const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
 
-type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset'
+type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset' | 'methods'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'expression', label: 'Gene expression' },
@@ -23,6 +24,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'degs', label: 'DEG table' },
   { id: 'enrichment', label: 'Enrichment' },
   { id: 'geneset', label: 'Gene sets' },
+  { id: 'methods', label: 'Methods' },
 ]
 
 export default function App() {
@@ -161,6 +163,7 @@ export default function App() {
               <Enrichment bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'geneset' &&
               <GeneSetExplorer bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
+            {tab === 'methods' && <Methods bundle={bundle} contrast={contrast} />}
           </ErrorBoundary>
         )}
       </main>

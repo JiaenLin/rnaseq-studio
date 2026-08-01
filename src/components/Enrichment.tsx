@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import { combinedScore } from '../lib/stats'
 import { prepareSets, runORA } from '../lib/ora'
+import { reportOra, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
 
 interface Props {
@@ -77,6 +78,18 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
   const orderedResults = useMemo(
     () => rankBy === 'count' ? [...results].sort((a, b) => b.count - a.count || a.padj - b.padj) : results,
     [results, rankBy])
+  // Feed the exact ORA configuration to the Methods tab.
+  const nSig = results.filter(r => r.padj < 0.05).length
+  useReport(
+    () => reportOra({
+      padjMax, lfcMin, direction, minSize, maxSize,
+      sources: selSources.size ? [...selSources] : allSources,
+      nSets: sets.length, nDeg: degUpper.size, nBackground: background.size, nSig,
+    }),
+    [padjMax, lfcMin, direction, minSize, maxSize, [...selSources].sort().join(','),
+      sets.length, degUpper.size, background.size, nSig].join('|'),
+  )
+
   const top = orderedResults.slice(0, topN)
   const bars = [...top].reverse().map(r => ({ id: r.id, description: r.name, count: r.count, padj: r.padj }))
   const selected = orderedResults.find(r => r.id === termId) || top[0]
