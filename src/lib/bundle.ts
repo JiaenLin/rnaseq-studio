@@ -7,9 +7,15 @@ import type {
 // A Reader resolves a file name within a bundle to its text, or null if absent.
 export type Reader = (name: string) => Promise<string | null>
 
+// dynamicTyping is OFF on purpose. It coerces anything number-shaped, and real
+// identifiers are often number-shaped: a condition called "517E2" is read as
+// scientific notation and becomes 51700, which then matches nothing in
+// meta.conditions — the group silently disappears from every plot. Gene ids and
+// sample names have the same exposure. Everything is parsed as text here and the
+// genuinely numeric columns are coerced explicitly below.
 function parseCsv<T>(text: string): T[] {
   const res = Papa.parse<T>(text.trim(), {
-    header: true, dynamicTyping: true, skipEmptyLines: true,
+    header: true, dynamicTyping: false, skipEmptyLines: true,
   })
   return res.data as T[]
 }
@@ -30,6 +36,19 @@ function coerceDeg(rows: DEGRow[]): DEGRow[] {
     r.baseMean = toNum(r.baseMean) as number
     r.log2FoldChange = toNum(r.log2FoldChange) as number
     r.lfcSE = toNum(r.lfcSE)
+    r.pvalue = toNum(r.pvalue)
+    r.padj = toNum(r.padj)
+  }
+  return rows
+}
+
+// Enrichment tables are parsed as text too, so their numeric columns need the
+// same explicit coercion the DEG table gets.
+function coerceEnrichment(rows: EnrichmentRow[]): EnrichmentRow[] {
+  for (const r of rows) {
+    r.setSize = (toNum(r.setSize) ?? 0) as number
+    r.count = (toNum(r.count) ?? 0) as number
+    r.score = toNum(r.score)
     r.pvalue = toNum(r.pvalue)
     r.padj = toNum(r.padj)
   }
@@ -71,7 +90,8 @@ function buildCounts(text: string): CountsMatrix {
   return { geneIds, geneNames, samples, values, index }
 }
 
-async function assemble(read: Reader): Promise<Bundle> {
+/** Exported so the parsing rules can be tested without a browser. */
+export async function assemble(read: Reader): Promise<Bundle> {
   const metaText = await read('meta.json')
   if (!metaText) throw new Error('meta.json not found in bundle')
   const meta = JSON.parse(metaText) as BundleMeta
@@ -91,7 +111,7 @@ async function assemble(read: Reader): Promise<Bundle> {
     if (degText) degByContrast[c.id] = coerceDeg(parseCsv<DEGRow>(degText))
     if (c.enrichment_file) {
       const eText = await read(c.enrichment_file)
-      if (eText) enrichmentByContrast[c.id] = parseCsv<EnrichmentRow>(eText)
+      if (eText) enrichmentByContrast[c.id] = coerceEnrichment(parseCsv<EnrichmentRow>(eText))
     }
   }
 

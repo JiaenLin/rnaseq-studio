@@ -190,6 +190,10 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
           <div className="card p-4">
             <Plot data={traces} downloadName={`expr_${g.name}`} layout={{
               margin: { t: 10, r: 10, b: 40, l: 56 }, showlegend: false,
+              // A combinatorial design can have 20+ long arm names; automargin
+              // grows the bottom edge instead of clipping them.
+              xaxis: { automargin: true, tickangle: order.length > 6 ? -45 : 0,
+                tickfont: { size: order.length > 12 ? 9 : 11 } },
               yaxis: { title: singleYTitle, zeroline: false },
               shapes: relative ? [{
                 type: 'line', layer: 'below', xref: 'paper', x0: 0, x1: 1, y0: 1, y1: 1,
@@ -278,6 +282,10 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   const stars = (p: number | null | undefined) =>
     p == null ? '' : p < 0.001 ? ' ***' : p < 0.01 ? ' **' : p < 0.05 ? ' *' : ''
 
+  // Long combinatorial designs (20+ arms) cannot label every panel: rotated
+  // names from one row grow tall enough to collide with the next row's titles.
+  const manyConds = condOrder.length > 6
+
   const nRows = rowsPref === 'auto'
     ? Math.min(4, Math.ceil(boxGenes.length / PANELS_PER_ROW))
     : Math.min(rowsPref, boxGenes.length)
@@ -294,7 +302,10 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     const toY = (v: number) =>
       relative ? (ctrlMean > 0 ? v / ctrlMean : NaN) : (log2 ? Math.log2(v + 1) : v)
     return condOrder.filter(c => byC[c]?.length).map(c => ({
-      type: 'box', name: c, legendgroup: c, showlegend: false,
+      type: 'box', name: c, legendgroup: c,
+      // With few arms the x ticks name the groups; with many they cannot fit
+      // under every panel, so one shared legend carries the names instead.
+      showlegend: manyConds && gi === 0,
       x: byC[c].map(() => c),                       // condition as the category tick
       y: byC[c].map(toY),
       xaxis: `x${ax(gi)}`, yaxis: `y${ax(gi)}`,
@@ -313,9 +324,11 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     grid: { rows: nRows, columns: nCols, pattern: 'independent', ygap: 0.34, xgap: 0.18 },
     // Top margin holds the first row's strip labels; left margin holds the shared
     // y-axis title. Both were what got clipped before.
-    margin: { t: 28, r: 10, b: 30, l: 64 },
-    height: Math.max(230, nRows * 196 + 46),
-    showlegend: false,                              // x ticks name the conditions
+    margin: { t: 28, r: 10, b: manyConds ? 76 : 30, l: 64 },
+    height: Math.max(230, nRows * 196 + 46 + (manyConds ? 54 : 0)),
+    showlegend: manyConds,
+    // Legend goes below the panels so it can never collide with a strip title.
+    legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: -0.02, yanchor: 'top', font: { size: 10 } },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     font: { family: 'system-ui, sans-serif', size: 11 },
     annotations: [
@@ -347,7 +360,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   boxGenes.forEach((_, gi) => {
     boxLayout[`xaxis${ax(gi)}`] = {
       type: 'category', automargin: true, tickfont: { size: 10 },
-      showgrid: false, zeroline: false,
+      showticklabels: !manyConds, showgrid: false, zeroline: false,
     }
     boxLayout[`yaxis${ax(gi)}`] = {
       // Free y — the whole point of a faceted expression panel.
@@ -436,6 +449,8 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
             <>
               <Plot data={moduleTraces} downloadName={`module_score_${contrast.id}`} layout={{
                 margin: { t: 8, r: 10, b: 36, l: 52 }, showlegend: false,
+                xaxis: { automargin: true, tickangle: moduleTraces.length > 6 ? -45 : 0,
+                  tickfont: { size: moduleTraces.length > 12 ? 9 : 11 } },
                 yaxis: { title: 'module score', zeroline: true },
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
               }} style={{ height: 300 }} />
