@@ -12,6 +12,9 @@ interface Props {
 }
 
 const MAX_HEATMAP = 120
+// Faceted box plots are one Plotly figure with independent axes; beyond this many
+// panels they stop being readable long before they get slow.
+const MAX_FACETS = 24
 
 // Single gene OR a gene list, in one tab. One gene → detailed box plot with group
 // means + DEG panel. Many genes → expression heatmap + a per-gene DEG-statistics
@@ -25,6 +28,8 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   // Suppresses the dropdown right after a pick, so a fully-typed gene doesn't keep
   // re-opening its own suggestion. Cleared on the next keystroke.
   const [suppress, setSuppress] = useState(false)
+  // For a gene list: one aggregate score, or every gene side by side.
+  const [listView, setListView] = useState<'module' | 'genes'>('module')
   const colors = conditionColors(meta.conditions)
 
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
@@ -219,6 +224,62 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     marker: { color: colors[c], size: 7 }, line: { color: colors[c] }, fillcolor: colors[c] + '22',
   }))
 
+  // ── per-gene small multiples ────────────────────────────────────────────────
+  // One figure with `grid.pattern: 'independent'` rather than N <Plot> instances:
+  // each gene keeps its own y-scale (expression spans orders of magnitude between
+  // genes, so a shared axis would flatten the low-expressed ones) at the cost of
+  // a single Plotly instance.
+  const facetGenes = matched.slice(0, MAX_FACETS)
+  const facetCols = Math.min(facetGenes.length, facetGenes.length <= 3 ? facetGenes.length : facetGenes.length <= 8 ? 4 : 5)
+  const facetRows = Math.ceil(facetGenes.length / Math.max(facetCols, 1))
+  const condOrder = meta.conditions.filter(c => ordered.some(o => o.cond === c))
+
+  // Plotly names the first axis "x"/"xaxis" and only later ones "x2"/"xaxis2";
+  // "xaxis1" is not a recognized layout key and would be silently dropped.
+  const ax = (gi: number) => (gi === 0 ? '' : String(gi + 1))
+
+  const facetTraces = facetGenes.flatMap((g, gi) => {
+    const vals = geneVals(g.row)
+    const byC: Record<string, number[]> = {}
+    ordered.forEach(o => { (byC[o.cond] ||= []).push(vals[o.col]) })
+    return condOrder.filter(c => byC[c]?.length).map(c => ({
+      type: 'box', name: c, legendgroup: c,
+      showlegend: gi === 0,                       // one shared legend, not one per panel
+      y: byC[c].map(v => (log2 ? Math.log2(v + 1) : v)),
+      xaxis: `x${ax(gi)}`, yaxis: `y${ax(gi)}`,
+      boxpoints: 'all', jitter: 0.5, pointpos: 0, boxmean: true,
+      marker: { color: colors[c], size: 5 }, line: { color: colors[c], width: 1.2 },
+      fillcolor: colors[c] + '22',
+      hovertemplate: `${g.name} · ${c}<br>%{y:.2f}<extra></extra>`,
+    }))
+  })
+
+  // Significance stars keep each panel title informative without a second line.
+  const stars = (p: number | null | undefined) =>
+    p == null ? '' : p < 0.001 ? ' ***' : p < 0.01 ? ' **' : p < 0.05 ? ' *' : ''
+
+  const facetLayout: Record<string, unknown> = {
+    grid: { rows: facetRows, columns: facetCols, pattern: 'independent', ygap: 0.42, xgap: 0.28 },
+    margin: { t: 26, r: 8, b: 8, l: 44 },
+    height: Math.max(220, facetRows * 168 + 60),
+    showlegend: true,
+    legend: { orientation: 'h', y: 1.04, x: 0.5, xanchor: 'center', font: { size: 11 } },
+    boxmode: 'group',
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { family: 'system-ui, sans-serif' },
+    annotations: facetGenes.map((g, gi) => ({
+      text: `${g.name}${stars(degMap.get(g.id.toUpperCase())?.padj)}`,
+      xref: `x${ax(gi)} domain`, yref: `y${ax(gi)} domain`,
+      x: 0.5, y: 1.14, xanchor: 'center', yanchor: 'bottom',
+      showarrow: false, font: { size: 11.5, weight: 600 },
+    })),
+  }
+  facetGenes.forEach((_, gi) => {
+    // Condition names live in the shared legend, so panel ticks stay off.
+    facetLayout[`xaxis${ax(gi)}`] = { showticklabels: false, showgrid: false, zeroline: false }
+    facetLayout[`yaxis${ax(gi)}`] = { tickfont: { size: 9 }, automargin: true, zeroline: false }
+  })
+
   const shown = matched.slice(0, MAX_HEATMAP)
   const zByGene = shown.map(g => zscore(geneVals(g.row).map(v => Math.log2(v + 1))))
   const heatTrace = [{
@@ -255,22 +316,55 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
       {input}
       <div className="space-y-4">
         <div className="card p-4">
-          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Module score (mean z of {matched.length} genes)</h3>
-            {moduleStat && (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                {listView === 'module'
+                  ? `Module score (mean z of ${matched.length} genes)`
+                  : `Per-gene expression (${facetGenes.length} of ${matched.length} genes)`}
+              </h3>
+              <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+                {([['module', 'Module score'], ['genes', 'Per gene']] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => setListView(v)}
+                    className={`pressable rounded-md px-2.5 py-1 text-xs font-medium ${
+                      listView === v
+                        ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-900 dark:text-indigo-300'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+            {listView === 'module' && moduleStat && (
               <span className="text-sm text-slate-500">
                 {contrast.numerator} vs {contrast.denominator}: Δ {moduleStat.diff.toFixed(2)} · t {moduleStat.t.toFixed(2)} · p {fmtP(moduleStat.p)}
               </span>
             )}
           </div>
-          <Plot data={moduleTraces} downloadName={`module_score_${contrast.id}`} layout={{
-            margin: { t: 8, r: 10, b: 36, l: 52 }, showlegend: false,
-            yaxis: { title: 'module score', zeroline: true },
-            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
-          }} style={{ height: 300 }} />
-          <p className="mt-1 text-xs text-slate-400">
-            Module score = for each sample, the mean across these genes of the gene's z-score (log2 normalized expression, standardized across samples). Dashed line = group mean.
-          </p>
+
+          {listView === 'module' ? (
+            <>
+              <Plot data={moduleTraces} downloadName={`module_score_${contrast.id}`} layout={{
+                margin: { t: 8, r: 10, b: 36, l: 52 }, showlegend: false,
+                yaxis: { title: 'module score', zeroline: true },
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
+              }} style={{ height: 300 }} />
+              <p className="mt-1 text-xs text-slate-400">
+                Module score = for each sample, the mean across these genes of the gene's z-score (log2 normalized expression, standardized across samples). Dashed line = group mean.
+              </p>
+            </>
+          ) : (
+            <>
+              <Plot data={facetTraces} downloadName={`per_gene_box_${contrast.id}`} layout={facetLayout} />
+              <p className="mt-1 text-xs text-slate-400">
+                One panel per gene, each on its <b>own y-scale</b> ({log2 ? 'log2 normalized + 1' : 'normalized counts'}) —
+                expression differs by orders of magnitude between genes, so a shared axis would flatten the low-expressed ones.
+                Dashed line = group mean. Stars = adjusted p-value (* &lt; 0.05, ** &lt; 0.01, *** &lt; 0.001).
+                {matched.length > MAX_FACETS && ` Showing the first ${MAX_FACETS} of ${matched.length} genes.`}
+              </p>
+            </>
+          )}
         </div>
 
         <div className="card p-4">
