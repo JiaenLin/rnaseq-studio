@@ -110,6 +110,9 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   }, [tokens, counts, degMap])
 
   const unmatched = tokens.filter(t => counts.index.get(t.toUpperCase()) === undefined)
+  // Relative expression applies to the expression plots — one gene, or the
+  // per-gene panel — but means nothing for the aggregate module score.
+  const showRelative = matched.length === 1 || (matched.length > 1 && listView === 'genes')
   const geneVals = (row: number) => Array.from(counts.values.subarray(row * S, row * S + S))
 
   const input = (
@@ -126,9 +129,17 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
           else if (e.key === 'Escape') setFocused(false)
         }}
       />
-      <label className="flex items-center gap-1.5 text-sm text-slate-500">
-        <input type="checkbox" checked={log2} onChange={e => setLog2(e.target.checked)} /> log2 scale
+      {/* Relative mode is linear by definition, so log2 cannot also apply. */}
+      <label className={`flex items-center gap-1.5 text-sm ${relative ? 'text-slate-300 dark:text-slate-600' : 'text-slate-500'}`}>
+        <input type="checkbox" checked={log2} disabled={relative}
+          onChange={e => setLog2(e.target.checked)} /> log2 scale
       </label>
+      {showRelative && (
+        <label className="flex items-center gap-1.5 text-sm text-slate-500">
+          <input type="checkbox" checked={relative} onChange={e => setRelative(e.target.checked)} />
+          relative expression to control
+        </label>
+      )}
       <button className="btn" onClick={() => setText('TP53, MYC, IL6, STAT1, CDKN1A, BAX')}>Load list</button>
       <button className="btn" onClick={() => setText('')}>Clear</button>
       {focused && !suppress && suggestions.length > 0 && (
@@ -157,12 +168,20 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     const byCond: Record<string, number[]> = {}
     ordered.forEach(o => { (byCond[o.cond] ||= []).push(vals[o.col]) })
     const order = meta.conditions.filter(c => byCond[c]?.length)
+    // Same relative transform as the per-gene panel: every sample ÷ the control
+    // mean, so the control group averages exactly 1.
+    const ctrlMean = mean(byCond[contrast.denominator] ?? [])
+    const toY = (v: number) =>
+      relative ? (ctrlMean > 0 ? v / ctrlMean : NaN) : (log2 ? Math.log2(v + 1) : v)
     const traces = order.map(c => ({
-      type: 'box', name: c, y: byCond[c].map(v => (log2 ? Math.log2(v + 1) : v)),
+      type: 'box', name: c, y: byCond[c].map(toY),
       boxpoints: 'all', jitter: 0.5, pointpos: 0, boxmean: true,
       marker: { color: colors[c], size: 7 }, line: { color: colors[c] }, fillcolor: colors[c] + '22',
     }))
     const d = degMap.get(g.id.toUpperCase())
+    const singleYTitle = relative
+      ? 'relative expression (control = 1)'
+      : log2 ? 'log2(normalized + 1)' : 'normalized counts'
 
     return (
       <div>
@@ -171,10 +190,17 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
           <div className="card p-4">
             <Plot data={traces} downloadName={`expr_${g.name}`} layout={{
               margin: { t: 10, r: 10, b: 40, l: 56 }, showlegend: false,
-              yaxis: { title: log2 ? 'log2(normalized + 1)' : 'normalized counts', zeroline: false },
+              yaxis: { title: singleYTitle, zeroline: false },
+              shapes: relative ? [{
+                type: 'line', layer: 'below', xref: 'paper', x0: 0, x1: 1, y0: 1, y1: 1,
+                line: { color: '#94a3b8', width: 1, dash: 'dot' },
+              }] : [],
               paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
             }} />
-            <p className="mt-1 text-center text-xs text-slate-400">Dashed line = group mean.</p>
+            <p className="mt-1 text-center text-xs text-slate-400">
+              Dashed line = group mean.
+              {relative && ` Each sample ÷ the ${contrast.denominator} mean, so ${contrast.denominator} averages 1 (dotted line).`}
+            </p>
           </div>
 
           <div className="space-y-4">
@@ -197,11 +223,18 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
                       <td className="py-1.5"><span className="pill" style={{ background: colors[c] + '22', color: colors[c] }}>{c}</span></td>
                       <td className="py-1.5 text-right text-slate-400">n={byCond[c].length}</td>
                       <td className="py-1.5 text-right font-mono font-medium">{mean(byCond[c]).toFixed(1)}</td>
+                      {relative && (
+                        <td className="py-1.5 text-right font-mono text-slate-500">
+                          {ctrlMean > 0 ? `${(mean(byCond[c]) / ctrlMean).toFixed(2)}×` : '—'}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="mt-1 text-xs text-slate-400">mean normalized counts</p>
+              <p className="mt-1 text-xs text-slate-400">
+                mean normalized counts{relative && ` · × = relative to ${contrast.denominator}`}
+              </p>
             </div>
           </div>
         </div>
@@ -274,7 +307,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   })
 
   const yTitle = relative
-    ? `relative expression (${contrast.denominator} = 1)`
+    ? `relative expression (control = 1)`
     : log2 ? 'log2(normalized + 1)' : 'normalized counts'
   const boxLayout: Record<string, unknown> = {
     grid: { rows: nRows, columns: nCols, pattern: 'independent', ygap: 0.34, xgap: 0.18 },
@@ -383,12 +416,6 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
               <span className="text-sm text-slate-500">
                 {contrast.numerator} vs {contrast.denominator}: Δ {moduleStat.diff.toFixed(2)} · t {moduleStat.t.toFixed(2)} · p {fmtP(moduleStat.p)}
               </span>
-            )}
-            {listView === 'genes' && (
-              <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                <input type="checkbox" checked={relative} onChange={e => setRelative(e.target.checked)} />
-                relative to {contrast.denominator} (=1)
-              </label>
             )}
             {listView === 'genes' && (
               <label className="flex items-center gap-1.5 text-xs text-slate-500">
