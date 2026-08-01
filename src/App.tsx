@@ -10,6 +10,9 @@ import DEGTable from './components/DEGTable'
 import Enrichment from './components/Enrichment'
 
 const DOI_URL = 'https://doi.org/10.5281/zenodo.21514152'
+// The two upstream apps that produce a bundle, by what the user already has.
+const LAB_URL = 'https://jiaenlin.github.io/rnaseq-lab/'
+const SERVICE_URL = 'https://jiaenlin.github.io/rnaseq-service/'
 const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
 
 type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset'
@@ -30,6 +33,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [showStart, setShowStart] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const zipRef = useRef<HTMLInputElement>(null)
@@ -103,6 +107,9 @@ export default function App() {
           )}
           <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
           <button className="btn" onClick={() => fileRef.current?.click()} title="Open an unzipped bundle folder">folder…</button>
+          <button className="btn" onClick={() => setShowStart(true)} title="Get a bundle from your counts or your raw FASTQ files">
+            No results yet?
+          </button>
           <button className="btn" onClick={() => setShowHelp(true)} title="What is a bundle & how to make one">?</button>
           <input ref={zipRef} type="file" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) loadZip(f); e.target.value = '' }} />
@@ -116,6 +123,7 @@ export default function App() {
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
           <span>👋 This is a <b>demo dataset</b>. Drop a <b>.zip</b> bundle anywhere (or use the button) to explore your data — it never leaves your browser.</span>
           <button className="btn ml-auto py-1" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
+          <button className="btn py-1" onClick={() => setShowStart(true)}>No results yet?</button>
           <button className="btn py-1" onClick={() => setShowHelp(true)}>Format</button>
         </div>
       )}
@@ -164,6 +172,88 @@ export default function App() {
       </footer>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showStart && (
+        <GetStartedModal
+          onClose={() => setShowStart(false)}
+          onFormat={() => { setShowStart(false); setShowHelp(true) }}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Studio only reads bundles, so a visitor with nothing to open is at a dead end.
+ * Route them by what they already have: counts → Lab, raw FASTQ → Service.
+ */
+function GetStartedModal({ onClose, onFormat }: { onClose: () => void; onFormat: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
+      <div className="card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
+        <div className="mb-3 flex items-start justify-between">
+          <h2 className="text-lg font-semibold">Don’t have a result bundle yet?</h2>
+          <button className="btn py-1" onClick={onClose}>✕</button>
+        </div>
+        <p className="text-sm text-slate-500">
+          RNA-seq Studio is the <b>explorer</b> — it opens results that already exist. Pick whichever
+          describes what you have right now and we’ll get you a bundle to bring back here.
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <StartCard
+            step="Start here if you have"
+            what="A gene count matrix"
+            detail="A CSV/TSV of genes × samples — e.g. from featureCounts, STAR, Salmon, or your core facility."
+            app="RNA-seq Lab"
+            does="Runs DESeq2 or limma-voom in your browser and hands you a bundle. Free, nothing uploaded."
+            href={LAB_URL}
+            accent="indigo"
+          />
+          <StartCard
+            step="Start here if you have"
+            what="Only raw FASTQ files"
+            detail="The folder your sequencer or provider delivered, full of .fastq.gz files."
+            app="RNA-seq Service"
+            does="Scans the folder, names your samples, and builds an analysis request to send us."
+            href={SERVICE_URL}
+            accent="emerald"
+          />
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <b>Already ran your own pipeline?</b> Any tool can produce a bundle — it’s five plain CSV
+          files.{' '}
+          <button className="underline hover:text-indigo-600" onClick={onFormat}>See the format</button>.
+        </div>
+
+        <p className="mt-3 text-xs text-slate-400">
+          All three tools run entirely in your browser. Your data never leaves your device.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function StartCard({ step, what, detail, app, does, href, accent }: {
+  step: string; what: string; detail: string; app: string; does: string; href: string
+  accent: 'indigo' | 'emerald'
+}) {
+  const ring = accent === 'indigo'
+    ? 'border-indigo-200 hover:border-indigo-400 dark:border-indigo-500/30'
+    : 'border-emerald-200 hover:border-emerald-400 dark:border-emerald-500/30'
+  const chip = accent === 'indigo'
+    ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+    : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+  return (
+    <div className={`flex flex-col rounded-xl border p-4 transition ${ring}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{step}</div>
+      <div className="mt-1 text-sm font-semibold">{what}</div>
+      <p className="mt-1 text-xs leading-relaxed text-slate-500">{detail}</p>
+      <div className={`mt-3 inline-flex w-fit rounded-md px-2 py-0.5 text-xs font-semibold ${chip}`}>{app}</div>
+      <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-500">{does}</p>
+      <a className="btn btn-primary mt-3 justify-center" href={href} target="_blank" rel="noopener noreferrer">
+        Open {app} ↗
+      </a>
     </div>
   )
 }
