@@ -86,7 +86,7 @@ export default function App() {
       onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false) }}
       onDrop={onDrop}>
       {dragOver && (
-        <div className="pointer-events-none absolute inset-2 z-40 grid place-items-center rounded-xl border-2 border-dashed border-indigo-400 bg-indigo-50/80 text-lg font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+        <div className="drop-overlay pointer-events-none absolute inset-2 z-40 grid place-items-center rounded-xl border-2 border-dashed border-indigo-400 bg-indigo-50/80 text-lg font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
           Drop a .zip bundle to open it
         </div>
       )}
@@ -188,8 +188,8 @@ export default function App() {
  */
 function GetStartedModal({ onClose, onFormat }: { onClose: () => void; onFormat: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
-      <div className="card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
+      <div className="modal-panel card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between">
           <h2 className="text-lg font-semibold">Don’t have a result bundle yet?</h2>
           <button className="btn py-1" onClick={onClose}>✕</button>
@@ -261,8 +261,8 @@ function StartCard({ step, what, detail, app, does, href, accent }: {
 function HelpModal({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false)
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
-      <div className="card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4" onClick={onClose}>
+      <div className="modal-panel card my-8 w-full max-w-2xl p-6" onClick={e => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between">
           <h2 className="text-lg font-semibold">Open your own result bundle</h2>
           <button className="btn py-1" onClick={onClose}>✕</button>

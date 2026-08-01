@@ -146,7 +146,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
             <span className="text-xs uppercase tracking-wide text-slate-400">sources:</span>
             {allSources.map(s => (
               <button key={s} onClick={() => toggleSource(s)}
-                className={`pill border ${selSources.size === 0 || selSources.has(s) ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : 'border-slate-200 text-slate-400 dark:border-slate-700'}`}>
+                className={`pill pressable border ${selSources.size === 0 || selSources.has(s) ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : 'border-slate-200 text-slate-400 dark:border-slate-700'}`}>
                 {s}
               </button>
             ))}

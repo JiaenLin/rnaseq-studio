@@ -4,6 +4,12 @@
 
 :root {
   color-scheme: light dark;
+
+  /* Motion. The built-in CSS easings are too weak to feel intentional; these are
+     the strong variants. Never ease-in on UI — it delays the exact moment the
+     user is watching. Every duration below stays inside the 300ms UI budget. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 html,
@@ -33,15 +39,26 @@ body {
   }
   .btn {
     @apply inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm
-      font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600
+      font-medium text-slate-700 hover:border-indigo-400 hover:text-indigo-600
       disabled:opacity-40 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200;
+    transition: transform 160ms var(--ease-out), color 160ms ease, border-color 160ms ease,
+      background-color 160ms ease;
+  }
+  /* Press feedback — the interface must visibly hear the click, and it has to
+     land on press rather than release or it feels dead. Subtle (0.95–0.98). */
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
   }
   .btn-primary {
     @apply border-indigo-500 bg-indigo-500 text-white hover:bg-indigo-600 hover:text-white;
   }
   .tab {
-    @apply cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 transition
+    @apply cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500
       hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100;
+    transition: transform 160ms var(--ease-out), color 160ms ease, background-color 160ms ease;
+  }
+  .tab:active {
+    transform: scale(0.98);
   }
   .tab-active {
     @apply bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300;
@@ -52,5 +69,64 @@ body {
   }
   .pill {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+
+  /* Pressable surfaces that aren't .btn/.tab — cards and filter pills. Gentler
+     than a button because they're larger: 0.97 on a card reads as a lurch. */
+  .pressable {
+    transition: transform 160ms var(--ease-out);
+  }
+  .pressable:active {
+    transform: scale(0.98);
+  }
+
+  /* Modals. Occasional, so they earn a standard entrance — without one the panel
+     teleports in. Never from scale(0): nothing in the real world appears from
+     nothing. Origin stays centred; modals are the exception to origin-aware
+     scaling because they aren't anchored to a trigger. */
+  .modal-overlay {
+    opacity: 1;
+    transition: opacity 200ms var(--ease-out);
+  }
+  .modal-panel {
+    opacity: 1;
+    transform: none;
+    transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+  }
+
+  /* Drag-and-drop affordance — rare, and appearing instantly reads as a glitch. */
+  .drop-overlay {
+    opacity: 1;
+    transition: opacity 150ms var(--ease-out);
+  }
+}
+
+@starting-style {
+  .modal-overlay {
+    opacity: 0;
+  }
+  .modal-panel {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  .drop-overlay {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion means fewer and gentler animations, not none: keep the opacity
+   fades that explain what appeared, drop everything that moves or scales. */
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled),
+  .tab:active,
+  .pressable:active,
+  .modal-panel {
+    transform: none;
+  }
+
+  @starting-style {
+    .modal-panel {
+      transform: none;
+    }
   }
 }

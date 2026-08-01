@@ -28,7 +28,7 @@ export default function Overview({ bundle, onOpenContrast }: Props) {
             const n = c.n_deg ?? degCount(c.id, thr)
             return (
               <button key={c.id} onClick={() => onOpenContrast(c.id)}
-                className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-4 py-2.5 text-left transition hover:border-indigo-400 hover:bg-indigo-50/50 dark:border-slate-700 dark:hover:bg-slate-800">
+                className="pressable flex w-full items-center justify-between rounded-lg border border-slate-200 px-4 py-2.5 text-left hover:border-indigo-400 hover:bg-indigo-50/50 dark:border-slate-700 dark:hover:bg-slate-800">
                 <span className="font-medium">{c.label}</span>
                 <span className="text-sm text-slate-500">
                   <span className="font-mono font-semibold text-indigo-600">{n.toLocaleString()}</span> DEGs · padj &lt; {thr}
