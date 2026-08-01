@@ -59,6 +59,44 @@ export function matchingContrast(sel: GroupSel, contrasts: Contrast[]): Contrast
   return contrasts.find(c => c.denominator === sel.control && c.numerator === sel.groups[0])
 }
 
+/**
+ * Contrasts indexed by reference group, built once per bundle.
+ *
+ * Only the comparisons the pipeline actually ran exist here — a viewer cannot
+ * conjure log2FC/padj for a pair that was never modelled. Indexing them lets the
+ * UI answer "given this control, what can I actually look at?" instantly.
+ */
+export interface ContrastIndex {
+  /** denominator → contrasts computed against it */
+  byControl: Map<string, Contrast[]>
+  /** groups usable as a reference, in the order meta declares conditions */
+  controls: string[]
+}
+
+export function indexContrasts(contrasts: Contrast[], conditions: string[]): ContrastIndex {
+  const byControl = new Map<string, Contrast[]>()
+  for (const c of contrasts) {
+    const list = byControl.get(c.denominator)
+    if (list) list.push(c)
+    else byControl.set(c.denominator, [c])
+  }
+  const rank = new Map(conditions.map((c, i) => [c, i] as const))
+  const controls = [...byControl.keys()]
+    .sort((a, b) => (rank.get(a) ?? 1e9) - (rank.get(b) ?? 1e9) || a.localeCompare(b))
+  return { byControl, controls }
+}
+
+/** Contrasts available for the current selection: this control, a chosen arm. */
+export function availableContrasts(idx: ContrastIndex, sel: GroupSel): Contrast[] {
+  return (idx.byControl.get(sel.control) ?? []).filter(c => sel.groups.includes(c.numerator))
+}
+
+/** Selected arms with no precomputed contrast against the chosen control. */
+export function groupsWithoutContrast(idx: ContrastIndex, sel: GroupSel): string[] {
+  const have = new Set((idx.byControl.get(sel.control) ?? []).map(c => c.numerator))
+  return sel.groups.filter(g => !have.has(g))
+}
+
 /** True when the selection no longer matches the contrast supplying DEG stats. */
 export const contrastMismatch = (sel: GroupSel, contrast?: Contrast): boolean =>
   !!contrast && (contrast.denominator !== sel.control || !sel.groups.includes(contrast.numerator))

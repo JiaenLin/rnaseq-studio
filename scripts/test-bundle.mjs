@@ -7,7 +7,8 @@
 // any error. Identifiers must stay text; only numeric columns get coerced.
 import { assemble } from '../src/lib/bundle.ts'
 import {
-  contrastMismatch, defaultSelection, displayOrder, matchingContrast, orderSamples,
+  availableContrasts, contrastMismatch, defaultSelection, displayOrder, groupsWithoutContrast,
+  indexContrasts, matchingContrast, orderSamples,
 } from '../src/lib/design.ts'
 
 let failed = 0
@@ -100,6 +101,37 @@ console.log('\nGROUP SELECTION')
     contrastMismatch({ control: '0755', groups: ['517E2+RSL3'] }, meta.contrasts[0]), true)
   check('a matching selection is not reported as mismatched',
     contrastMismatch(narrow, meta.contrasts[0]), false)
+}
+
+console.log('\nAVAILABLE CONTRASTS')
+{
+  // Two references, so "what can I compare?" depends on the chosen control.
+  const contrasts = [
+    { id: 'a_vs_ctrl', numerator: 'a', denominator: 'ctrl', label: 'a vs ctrl', deg_file: 'x' },
+    { id: 'b_vs_ctrl', numerator: 'b', denominator: 'ctrl', label: 'b vs ctrl', deg_file: 'x' },
+    { id: 'd_vs_c', numerator: 'd', denominator: 'c', label: 'd vs c', deg_file: 'x' },
+  ]
+  const idx = indexContrasts(contrasts, ['ctrl', 'a', 'b', 'c', 'd'])
+
+  check('references are indexed', idx.controls, ['ctrl', 'c'])
+  check('a group that is never a denominator is not a reference', idx.controls.includes('a'), false)
+  check('contrasts group under their reference',
+    (idx.byControl.get('ctrl') ?? []).map(c => c.id), ['a_vs_ctrl', 'b_vs_ctrl'])
+
+  check('only selected arms surface a contrast',
+    availableContrasts(idx, { control: 'ctrl', groups: ['a'] }).map(c => c.id), ['a_vs_ctrl'])
+  check('selecting both surfaces both',
+    availableContrasts(idx, { control: 'ctrl', groups: ['a', 'b'] }).map(c => c.id),
+    ['a_vs_ctrl', 'b_vs_ctrl'])
+  check('a different control surfaces a different set',
+    availableContrasts(idx, { control: 'c', groups: ['d'] }).map(c => c.id), ['d_vs_c'])
+  check('no contrast when the pair was never computed',
+    availableContrasts(idx, { control: 'ctrl', groups: ['d'] }), [])
+
+  check('arms without a contrast are reported',
+    groupsWithoutContrast(idx, { control: 'ctrl', groups: ['a', 'd'] }), ['d'])
+  check('nothing reported when every arm is testable',
+    groupsWithoutContrast(idx, { control: 'ctrl', groups: ['a', 'b'] }), [])
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll bundle tests passed\n')

@@ -1,7 +1,10 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast } from './types'
 import type { GroupSel } from './lib/design'
-import { contrastMismatch, defaultSelection, matchingContrast } from './lib/design'
+import {
+  availableContrasts, contrastMismatch, defaultSelection, groupsWithoutContrast,
+  indexContrasts, matchingContrast,
+} from './lib/design'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import Overview from './components/Overview'
@@ -159,7 +162,7 @@ export default function App() {
 
       {/* Only worth showing when there is something to choose between. */}
       {bundle && contrast && bundle.meta.conditions.length > 2 && (
-        <GroupBar bundle={bundle} contrast={contrast} sel={sel} onChange={pickSel} />
+        <GroupBar bundle={bundle} contrast={contrast} sel={sel} onChange={pickSel} onPickContrast={pickContrast} />
       )}
 
       {bundle && (
@@ -230,11 +233,18 @@ export default function App() {
  * every expression view, so a 23-arm design can be narrowed to the three arms a
  * given question is about.
  */
-function GroupBar({ bundle, contrast, sel, onChange }: {
-  bundle: Bundle; contrast: Contrast; sel: GroupSel; onChange: (s: GroupSel) => void
+function GroupBar({ bundle, contrast, sel, onChange, onPickContrast }: {
+  bundle: Bundle; contrast: Contrast; sel: GroupSel
+  onChange: (s: GroupSel) => void; onPickContrast: (id: string) => void
 }) {
   const all = bundle.meta.conditions
   const nSamples = (c: string) => bundle.samples.filter(s => s.condition === c).length
+  // Built once per bundle: which comparisons the pipeline actually computed.
+  const idx = useMemo(
+    () => indexContrasts(bundle.meta.contrasts, all),
+    [bundle.meta.contrasts, all])
+  const available = availableContrasts(idx, sel)
+  const missing = groupsWithoutContrast(idx, sel)
   const mismatch = contrastMismatch(sel, contrast)
 
   const toggle = (c: string) => onChange({
@@ -254,18 +264,21 @@ function GroupBar({ bundle, contrast, sel, onChange }: {
               groups: sel.groups.filter(g => g !== e.target.value),
             })}
           >
-            {all.map(c => <option key={c} value={c}>{c}</option>)}
+            {all.map(c => {
+              const n = (idx.byControl.get(c) ?? []).length
+              return <option key={c} value={c}>{c}{n ? ` — ${n} contrast${n > 1 ? 's' : ''}` : ''}</option>
+            })}
           </select>
         </label>
 
         <div className="ml-auto flex items-center gap-1.5">
           <button className="btn py-1 text-xs"
             onClick={() => onChange({ control: sel.control, groups: all.filter(c => c !== sel.control) })}>
-            All groups
+            Select all
           </button>
           <button className="btn py-1 text-xs"
-            onClick={() => onChange({ control: contrast.denominator, groups: [contrast.numerator] })}>
-            Just this contrast
+            onClick={() => onChange({ control: sel.control, groups: [] })}>
+            Remove all
           </button>
         </div>
       </div>
@@ -274,23 +287,53 @@ function GroupBar({ bundle, contrast, sel, onChange }: {
         <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Compare</span>
         {all.filter(c => c !== sel.control).map(c => {
           const on = sel.groups.includes(c)
+          const testable = (idx.byControl.get(sel.control) ?? []).some(x => x.numerator === c)
           return (
             <button
               key={c}
               onClick={() => toggle(c)}
-              title={`${nSamples(c)} samples`}
+              title={`${nSamples(c)} samples · ${testable ? 'has a contrast against ' + sel.control : 'no contrast against ' + sel.control}`}
               className={`pressable rounded-md border px-2 py-0.5 text-xs transition ${
                 on
                   ? 'border-indigo-400 bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
                   : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-slate-700'}`}
-            >{c}</button>
+            >{c}{testable && <span className="ml-1 opacity-60" aria-hidden="true">•</span>}</button>
           )
         })}
+      </div>
+
+      {/* Which precomputed comparisons this selection unlocks. */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-slate-200 pt-2 dark:border-slate-700">
+        <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Available contrasts
+        </span>
+        {available.length === 0 && (
+          <span className="text-xs text-slate-400">
+            none for this selection — pick an arm marked <span className="opacity-60">•</span>, or change the control.
+          </span>
+        )}
+        {available.map(c => (
+          <button
+            key={c.id}
+            onClick={() => onPickContrast(c.id)}
+            className={`pressable rounded-md border px-2 py-0.5 text-xs transition ${
+              c.id === contrast.id
+                ? 'border-indigo-500 bg-indigo-500 font-medium text-white'
+                : 'border-slate-300 bg-white text-slate-600 hover:border-indigo-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}
+          >
+            {c.label}{typeof c.n_deg === 'number' ? ` · ${c.n_deg.toLocaleString()} DEGs` : ''}
+          </button>
+        ))}
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
         <b>{sel.groups.length + 1}</b> of {all.length} groups shown, against <b>{sel.control}</b> —
         applies to gene expression, gene sets and the heatmap.
+        {!!missing.length && (
+          <span> {missing.length} selected arm{missing.length > 1 ? 's have' : ' has'} no
+            contrast against {sel.control}, so {missing.length > 1 ? 'they appear' : 'it appears'} in the
+            expression plots without DEG statistics.</span>
+        )}
         {mismatch && (
           <span className="text-amber-600 dark:text-amber-400">
             {' '}DEG statistics still come from <b>{contrast.label}</b>, which this selection does not match.
