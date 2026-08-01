@@ -44,7 +44,9 @@ function Metric({ label, value, sub }: { label: string; value: string; sub?: str
   return (
     <div className="card p-4">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 truncate text-lg font-semibold" title={value}>{value}</div>
+      {/* Wraps rather than truncating — the project name is often the only thing
+          identifying whose data this is, and "Ferroptosis combinatori…" is not. */}
+      <div className="mt-1 break-words text-lg font-semibold leading-snug" title={value}>{value}</div>
       {sub && <div className="text-xs text-slate-400">{sub}</div>}
     </div>
   )
