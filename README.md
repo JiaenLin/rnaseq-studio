@@ -61,6 +61,10 @@ the DESeq2 pipeline (counts → differential expression → enrichment) and writ
 > ([source](https://github.com/JiaenLin/rnaseq-lab)): run **limma-voom** or **DESeq2** on your
 > counts entirely in the browser (via webR) and get a bundle to open here.
 
+> **🧫 Only have raw FASTQ files? — [RNA-seq Service](https://jiaenlin.github.io/rnaseq-service/)**
+> ([source](https://github.com/JiaenLin/rnaseq-service)): scan your sequencing folder, name your
+> samples, and generate an analysis request.
+
 _(An interim reference exporter for the existing R pipeline also lives in `scripts/export-bundle.R`.)_
 
 ---
