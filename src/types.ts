@@ -9,6 +9,8 @@
 //   meta.json                    ← BundleMeta (below)
 //   samples.csv                  ← sample, condition, [covariate columns…]
 //   normalized_counts.csv        ← gene_id, [gene_name,] <sample1>, <sample2>, …
+//   raw_counts.csv               ← same shape, un-normalized; optional, enables
+//                                  running DESeq2 here for un-exported pairs
 //   deg_<contrastId>.csv         ← one per contrast (DEGRow columns)
 //   enrichment_<contrastId>.csv  ← one per contrast, optional (EnrichmentRow columns)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,6 +88,13 @@ export interface Bundle {
   meta: BundleMeta
   samples: SampleRow[]
   counts: CountsMatrix
+  /**
+   * Raw (un-normalized) counts, when the exporter includes them. DESeq2 models
+   * raw counts and derives its own size factors, so comparing a pair the
+   * pipeline did not export requires this — the normalized matrix cannot stand
+   * in without violating the model.
+   */
+  rawCounts?: CountsMatrix
   degByContrast: Record<string, DEGRow[]>
   enrichmentByContrast: Record<string, EnrichmentRow[]>
   genesets?: GeneSetDef[]

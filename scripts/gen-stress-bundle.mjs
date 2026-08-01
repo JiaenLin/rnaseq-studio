@@ -58,6 +58,10 @@ files['samples.csv'] = csv(['sample', 'condition'], samples.map(s => `${s.sample
 files['normalized_counts.csv'] = csv(
   ['gene_id', 'gene_name', ...samples.map(s => s.sample)],
   genes.map((g, gi) => [g.id, g.id, ...counts[gi].map(v => v.toFixed(2))].join(',')))
+// Raw integer counts, so Studio can run DESeq2 on pairs this export omits.
+files['raw_counts.csv'] = csv(
+  ['gene_id', 'gene_name', ...samples.map(s => s.sample)],
+  genes.map((g, gi) => [g.id, g.id, ...counts[gi].map(v => String(Math.round(v)))].join(',')))
 
 const CONTRASTS = [
   ['517E2+RSL3', '517E2'], ['517E2+RSL3+Fer1', '517E2+RSL3'], ['517E2+BFA', '517E2'],

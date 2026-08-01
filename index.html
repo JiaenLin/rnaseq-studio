@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RNA-seq Studio</title>
     <meta name="description" content="Interactive bulk RNA-seq differential expression & enrichment explorer." />
+    <!-- Cross-origin isolation (SharedArrayBuffer) so webR can run DESeq2 on static hosting -->
+    <script src="coi-serviceworker.min.js"></script>
   </head>
   <body>
     <div id="root"></div>

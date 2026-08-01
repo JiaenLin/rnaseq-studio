@@ -104,6 +104,10 @@ export async function assemble(read: Reader): Promise<Bundle> {
   if (!countsText) throw new Error('normalized_counts.csv not found in bundle')
   const counts = buildCounts(countsText)
 
+  // Optional: enables running DESeq2 in-browser for pairs the pipeline skipped.
+  const rawText = await read('raw_counts.csv')
+  const rawCounts = rawText ? buildCounts(rawText) : undefined
+
   const degByContrast: Record<string, DEGRow[]> = {}
   const enrichmentByContrast: Record<string, EnrichmentRow[]> = {}
   for (const c of meta.contrasts) {
@@ -130,7 +134,7 @@ export async function assemble(read: Reader): Promise<Bundle> {
     if (list.length) genesets = list
   }
 
-  return { meta, samples, counts, degByContrast, enrichmentByContrast, genesets }
+  return { meta, samples, counts, rawCounts, degByContrast, enrichmentByContrast, genesets }
 }
 
 // Load a bundle served under a base URL (e.g. the bundled sample, or a hosted dir).

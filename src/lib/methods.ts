@@ -234,7 +234,11 @@ export function buildDoc(
   title = DEFAULT_TITLE,
 ): MethodsDoc {
   const { meta } = bundle
-  const eng = engineName(meta.engine, meta.counts_unit)
+  // A contrast computed in-app is DESeq2 regardless of what produced the bundle,
+  // so the Methods text must name DESeq2 rather than the bundle's engine.
+  const eng = contrast.id.startsWith('~deseq2:')
+    ? { name: 'DESeq2', keys: ['deseq2'], unknown: false }
+    : engineName(meta.engine, meta.counts_unit)
   const nNum = bundle.samples.filter(x => x.condition === contrast.numerator).length
   const nDen = bundle.samples.filter(x => x.condition === contrast.denominator).length
   const species = meta.species && !/unknown/i.test(meta.species) ? ` (${meta.species})` : ''

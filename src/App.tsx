@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import type { Bundle, Contrast } from './types'
+import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
-import { defaultSelection, orderSamples } from './lib/design'
-import { computeDE, computedContrastId, countSignificant } from './lib/de'
+import { defaultSelection } from './lib/design'
+import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import Overview from './components/Overview'
@@ -40,6 +40,10 @@ export default function App() {
   const [sel, setSel] = useState<GroupSel>({ control: '', groups: [] })
   // Which selected arm the DEG statistics describe (control is the reference).
   const [focus, setFocus] = useState<string>('')
+  // DESeq2 results computed this session, keyed by "<numerator>|<denominator>".
+  const [computed, setComputed] = useState<Record<string, DEGRow[]>>({})
+  const [running, setRunning] = useState(false)
+  const [runLog, setRunLog] = useState<string>('')
   const [showHelp, setShowHelp] = useState(false)
   const [showStart, setShowStart] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -113,34 +117,46 @@ export default function App() {
 
   /* The comparison every tab reports on.
    *
-   * If the pipeline computed control-vs-focus, use its statistics. Otherwise
-   * test that pair here and splice the result into a derived bundle under a
-   * synthetic contrast id — so every tab keeps reading degByContrast[id] and
-   * needs no knowledge of where the numbers came from. */
+   * Either the pipeline's own contrast, or a DESeq2 run performed here for a
+   * pair it never exported. Computed results are spliced into a derived bundle
+   * under a synthetic id, so every tab keeps reading degByContrast[id] and needs
+   * no knowledge of where the numbers came from. Both paths are DESeq2. */
   const active = useMemo(() => {
     if (!bundle) return null
     const pre = bundle.meta.contrasts.find(c => c.denominator === sel.control && c.numerator === focus)
-      ?? (focus ? undefined : bundle.meta.contrasts.find(c => c.id === contrastId))
     if (pre) return { bundle, contrast: pre, computed: false }
-    if (!focus || !sel.control) {
-      const fallback = bundle.meta.contrasts.find(c => c.id === contrastId) ?? bundle.meta.contrasts[0]
-      return fallback ? { bundle, contrast: fallback, computed: false } : null
-    }
 
-    const ordered = orderSamples(bundle.counts.samples, bundle.samples, sel)
-    const rows = computeDE(bundle.counts, ordered, focus, sel.control)
-    const id = computedContrastId(focus, sel.control)
-    const contrast: Contrast = {
-      id, numerator: focus, denominator: sel.control,
-      label: `${focus} vs ${sel.control}`, deg_file: '',
-      n_deg: countSignificant(rows),
+    const rows = focus && sel.control ? computed[`${focus}|${sel.control}`] : undefined
+    if (rows) {
+      const id = computedContrastId(focus, sel.control)
+      return {
+        bundle: { ...bundle, degByContrast: { ...bundle.degByContrast, [id]: rows } },
+        contrast: {
+          id, numerator: focus, denominator: sel.control,
+          label: `${focus} vs ${sel.control}`, deg_file: '', n_deg: countSignificant(rows),
+        } as Contrast,
+        computed: true,
+      }
     }
-    return {
-      bundle: { ...bundle, degByContrast: { ...bundle.degByContrast, [id]: rows } },
-      contrast,
-      computed: true,
+    const fallback = bundle.meta.contrasts.find(c => c.id === contrastId) ?? bundle.meta.contrasts[0]
+    return fallback ? { bundle, contrast: fallback, computed: false } : null
+  }, [bundle, sel.control, focus, contrastId, computed])
+
+  /** DESeq2 for the current pair, on explicit request — it is a real analysis. */
+  const runPair = async () => {
+    if (!bundle?.rawCounts || !focus || !sel.control) return
+    setRunning(true); setRunLog('')
+    const log = (m: string) => setRunLog(m)
+    try {
+      const rows = await runDESeq2(
+        { raw: bundle.rawCounts, samples: bundle.samples, numerator: focus, denominator: sel.control }, log)
+      setComputed(c => ({ ...c, [`${focus}|${sel.control}`]: rows }))
+    } catch (e: any) {
+      setRunLog(`Failed: ${e?.message || e}`)
+    } finally {
+      setRunning(false)
     }
-  }, [bundle, sel, focus, contrastId])
+  }
 
   const viewBundle = active?.bundle ?? bundle
   const contrast = active?.contrast
@@ -202,8 +218,12 @@ export default function App() {
 
       {/* Only worth showing when there is something to choose between. */}
       {bundle && contrast && bundle.meta.conditions.length > 2 && (
-        <GroupBar bundle={bundle} contrast={contrast} sel={sel} focus={focus}
-          computed={!!active?.computed} onChange={pickSel} onFocus={setFocus} />
+        <GroupBar
+          bundle={bundle} contrast={contrast} sel={sel} focus={focus}
+          computed={!!active?.computed} running={running} runLog={runLog}
+          hasPair={!!(focus && bundle.meta.contrasts.some(c => c.denominator === sel.control && c.numerator === focus))
+            || !!computed[`${focus}|${sel.control}`]}
+          onChange={pickSel} onFocus={setFocus} onRun={runPair} />
       )}
 
       {bundle && (
@@ -274,10 +294,14 @@ export default function App() {
  * every expression view, so a 23-arm design can be narrowed to the three arms a
  * given question is about.
  */
-function GroupBar({ bundle, contrast, sel, focus, computed, onChange, onFocus }: {
-  bundle: Bundle; contrast: Contrast; sel: GroupSel; focus: string; computed: boolean
-  onChange: (s: GroupSel) => void; onFocus: (g: string) => void
+function GroupBar({
+  bundle, contrast, sel, focus, computed, running, runLog, hasPair, onChange, onFocus, onRun,
+}: {
+  bundle: Bundle; contrast: Contrast; sel: GroupSel; focus: string
+  computed: boolean; running: boolean; runLog: string; hasPair: boolean
+  onChange: (s: GroupSel) => void; onFocus: (g: string) => void; onRun: () => void
 }) {
+  const canCompute = !!bundle.rawCounts
   const all = bundle.meta.conditions
   const nSamples = (c: string) => bundle.samples.filter(s => s.condition === c).length
 
@@ -333,8 +357,8 @@ function GroupBar({ bundle, contrast, sel, focus, computed, onChange, onFocus }:
         })}
       </div>
 
-      {/* Which pair the DEG statistics describe. Every selected arm is offered:
-          precomputed when the pipeline ran it, tested here when it did not. */}
+      {/* Which pair the DEG statistics describe. Precomputed when the pipeline
+          exported it, otherwise DESeq2 is run here on the raw counts. */}
       <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2 dark:border-slate-700">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Statistics for
@@ -346,15 +370,37 @@ function GroupBar({ bundle, contrast, sel, focus, computed, onChange, onFocus }:
             <select className="input py-1 text-sm" value={focus} onChange={e => onFocus(e.target.value)}>
               {sel.groups.map(g => <option key={g} value={g}>{g} vs {sel.control}</option>)}
             </select>
-            <span className={`pill ${computed
-              ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200'
-              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200'}`}>
-              {computed ? 'computed here' : 'from your pipeline'}
-            </span>
-            {typeof contrast.n_deg === 'number' && (
-              <span className="text-xs text-slate-500">
-                {contrast.n_deg.toLocaleString()} DEGs · padj &lt; 0.05, |log2FC| ≥ 1
+
+            {hasPair ? (
+              <>
+                <span className={`pill ${computed
+                  ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-200'
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200'}`}>
+                  DESeq2 · {computed ? 'run here' : 'from your pipeline'}
+                </span>
+                {typeof contrast.n_deg === 'number' && (
+                  <span className="text-xs text-slate-500">
+                    {contrast.n_deg.toLocaleString()} DEGs · padj &lt; 0.05, |log2FC| ≥ 1
+                  </span>
+                )}
+              </>
+            ) : canCompute ? (
+              <>
+                <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
+                  {running ? 'Running DESeq2…' : 'Run DESeq2 for this pair'}
+                </button>
+                <span className="text-xs text-slate-400">
+                  {running ? runLog : 'not exported by your pipeline — runs in your browser (R + DESeq2)'}
+                </span>
+              </>
+            ) : (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                not exported by your pipeline, and this bundle has no <code>raw_counts.csv</code> —
+                DESeq2 needs raw counts, so this pair cannot be tested here.
               </span>
+            )}
+            {!running && runLog.startsWith('Failed') && (
+              <span className="text-xs text-red-500">{runLog}</span>
             )}
           </>
         )}
@@ -363,7 +409,7 @@ function GroupBar({ bundle, contrast, sel, focus, computed, onChange, onFocus }:
       <p className="mt-2 text-xs text-slate-400">
         <b>{sel.groups.length + 1}</b> of {all.length} groups shown, against <b>{sel.control}</b> —
         applies to gene expression, gene sets and the heatmap.
-        {computed && ' Statistics for this pair were not in the bundle, so they were computed here with a Welch t-test on normalized counts (BH-adjusted) — an exploratory screen, not DESeq2.'}
+        {computed && ' This pair was not in the bundle, so DESeq2 was run here on the raw counts — the same method, so the numbers are comparable with the exported contrasts.'}
       </p>
     </div>
   )
@@ -553,6 +599,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
               <tr><td className="font-mono">meta.json</td><td>project, species, control, and the list of contrasts</td></tr>
               <tr><td className="font-mono">samples.csv</td><td><span className="font-mono text-xs">sample, condition, [covariates…]</span></td></tr>
               <tr><td className="font-mono">normalized_counts.csv</td><td><span className="font-mono text-xs">gene_id, [gene_name,] &lt;sample1&gt;, &lt;sample2&gt;, …</span></td></tr>
+              <tr><td className="font-mono">raw_counts.csv <span className="text-slate-400">(optional)</span></td><td>same shape, un-normalized — lets Studio run DESeq2 on pairs you did not export</td></tr>
               <tr><td className="font-mono">deg_&lt;contrast&gt;.csv</td><td><span className="font-mono text-xs">gene_id, gene_name, baseMean, log2FoldChange, lfcSE, pvalue, padj</span></td></tr>
               <tr><td className="font-mono">genesets.csv <span className="text-slate-400">(optional)</span></td><td><span className="font-mono text-xs">source, set_id, set_name, genes</span> — enables live ORA</td></tr>
             </tbody>

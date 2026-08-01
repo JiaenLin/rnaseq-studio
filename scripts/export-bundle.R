@@ -6,7 +6,7 @@
 #   Rscript export-bundle.R <analysis_dir> [out_dir]
 #
 # Emits, per cell type, a folder with: meta.json, samples.csv,
-# normalized_counts.csv, deg_<contrast>.csv, enrichment_<contrast>.csv
+# normalized_counts.csv, raw_counts.csv, deg_<contrast>.csv, enrichment_<contrast>.csv
 # (matching the schema in src/types.ts). Requires DESeq2 (to read the dds).
 # ─────────────────────────────────────────────────────────────────────────────
 suppressMessages(library(DESeq2))
@@ -153,6 +153,20 @@ for (ct in cts) {
   counts_df <- data.frame(gene_id = rownames(nc), gene_name = unname(gn), check.names = FALSE)
   counts_df <- cbind(counts_df, round(as.data.frame(nc), 3))
   write.csv(counts_df, file.path(outDir, "normalized_counts.csv"), row.names = FALSE)
+
+  # raw_counts.csv — un-normalized counts. Optional for viewing, but required for
+  # Studio to run DESeq2 on a pair this export did not include: DESeq2 models raw
+  # counts and derives its own size factors.
+  raw <- tryCatch(BiocGenerics::counts(dds, normalized = FALSE), error = function(e) NULL)
+  if (!is.null(raw)) {
+    gr <- gene_name_map[rownames(raw)]; gr[is.na(gr)] <- rownames(raw)[is.na(gr)]
+    raw_df <- data.frame(gene_id = rownames(raw), gene_name = unname(gr), check.names = FALSE)
+    raw_df <- cbind(raw_df, as.data.frame(raw))
+    write.csv(raw_df, file.path(outDir, "raw_counts.csv"), row.names = FALSE)
+    message("  [bundle] raw_counts.csv written (enables new contrasts in Studio)")
+  } else {
+    message("  [bundle] raw counts unavailable - Studio will not be able to add contrasts")
+  }
 
   # genesets.csv — full memberships for live ORA (msigdbr, force-installed),
   # restricted to genes present in this dataset. Robust to msigdbr API renames.

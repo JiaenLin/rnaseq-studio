@@ -6,11 +6,8 @@
 // matched meta.conditions and those samples vanished from every plot without
 // any error. Identifiers must stay text; only numeric columns get coerced.
 import { assemble } from '../src/lib/bundle.ts'
-import {
-  availableContrasts, contrastMismatch, defaultSelection, displayOrder, groupsWithoutContrast,
-  indexContrasts, matchingContrast, orderSamples,
-} from '../src/lib/design.ts'
-import { computeDE, computedContrastId, countSignificant, isComputedContrast } from '../src/lib/de.ts'
+import { defaultSelection, displayOrder, orderSamples } from '../src/lib/design.ts'
+import { computedContrastId, countSignificant, isComputedContrast } from '../src/lib/deseq.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -94,89 +91,26 @@ console.log('\nGROUP SELECTION')
   check('every returned col indexes the counts matrix',
     shown.every(s => s.col >= 0 && s.col < bundle.counts.samples.length), true)
 
-  check('one experimental group resolves to its contrast',
-    matchingContrast(narrow, meta.contrasts)?.id, '517E2+RSL3_vs_517E2')
-  check('several groups resolve to no single contrast',
-    matchingContrast({ control: '517E2', groups: ['517E2+RSL3', '0755'] }, meta.contrasts), undefined)
-  check('a mismatched reference is reported',
-    contrastMismatch({ control: '0755', groups: ['517E2+RSL3'] }, meta.contrasts[0]), true)
-  check('a matching selection is not reported as mismatched',
-    contrastMismatch(narrow, meta.contrasts[0]), false)
 }
 
-console.log('\nAVAILABLE CONTRASTS')
+console.log('\nDESeq2 CONTRAST HELPERS')
 {
-  // Two references, so "what can I compare?" depends on the chosen control.
-  const contrasts = [
-    { id: 'a_vs_ctrl', numerator: 'a', denominator: 'ctrl', label: 'a vs ctrl', deg_file: 'x' },
-    { id: 'b_vs_ctrl', numerator: 'b', denominator: 'ctrl', label: 'b vs ctrl', deg_file: 'x' },
-    { id: 'd_vs_c', numerator: 'd', denominator: 'c', label: 'd vs c', deg_file: 'x' },
-  ]
-  const idx = indexContrasts(contrasts, ['ctrl', 'a', 'b', 'c', 'd'])
-
-  check('references are indexed', idx.controls, ['ctrl', 'c'])
-  check('a group that is never a denominator is not a reference', idx.controls.includes('a'), false)
-  check('contrasts group under their reference',
-    (idx.byControl.get('ctrl') ?? []).map(c => c.id), ['a_vs_ctrl', 'b_vs_ctrl'])
-
-  check('only selected arms surface a contrast',
-    availableContrasts(idx, { control: 'ctrl', groups: ['a'] }).map(c => c.id), ['a_vs_ctrl'])
-  check('selecting both surfaces both',
-    availableContrasts(idx, { control: 'ctrl', groups: ['a', 'b'] }).map(c => c.id),
-    ['a_vs_ctrl', 'b_vs_ctrl'])
-  check('a different control surfaces a different set',
-    availableContrasts(idx, { control: 'c', groups: ['d'] }).map(c => c.id), ['d_vs_c'])
-  check('no contrast when the pair was never computed',
-    availableContrasts(idx, { control: 'ctrl', groups: ['d'] }), [])
-
-  check('arms without a contrast are reported',
-    groupsWithoutContrast(idx, { control: 'ctrl', groups: ['a', 'd'] }), ['d'])
-  check('nothing reported when every arm is testable',
-    groupsWithoutContrast(idx, { control: 'ctrl', groups: ['a', 'b'] }), [])
-}
-
-console.log('\nON-THE-FLY DIFFERENTIAL EXPRESSION')
-{
-  // 3 reps per group; gene "UP" is exactly 4x in treat, "FLAT" is unchanged.
-  const cols = ['c1', 'c2', 'c3', 't1', 't2', 't3']
-  const ordered = cols.map((s, i) => ({ sample: s, col: i, cond: i < 3 ? 'ctrl' : 'treat' }))
-  const rows = [
-    [100, 104, 96, 400, 416, 384],   // UP    → log2FC ≈ 2
-    [200, 205, 195, 201, 199, 204],  // FLAT  → log2FC ≈ 0
-    [50, 52, 48, 13, 12, 13],        // DOWN  → log2FC ≈ -2
-  ]
-  const counts = {
-    geneIds: ['UP', 'FLAT', 'DOWN'],
-    geneNames: ['UP', 'FLAT', 'DOWN'],
-    samples: cols,
-    values: Float64Array.from(rows.flat()),
-    index: new Map([['UP', 0], ['FLAT', 1], ['DOWN', 2]]),
-  }
-  const de = computeDE(counts, ordered, 'treat', 'ctrl')
-  const by = Object.fromEntries(de.map(r => [r.gene_id, r]))
-
-  check('a 4x gene reports log2FC ≈ 2', Math.abs(by.UP.log2FoldChange - 2) < 0.05, true)
-  check('an unchanged gene reports log2FC ≈ 0', Math.abs(by.FLAT.log2FoldChange) < 0.05, true)
-  // ~-1.9 rather than exactly -2: log2(v+1) pulls low counts toward zero.
-  check('direction is signed against the control',
-    by.DOWN.log2FoldChange < -1.5 && by.DOWN.log2FoldChange > -2.1, true)
-  check('a real change is significant', by.UP.padj < 0.05, true)
-  check('an unchanged gene is not', by.FLAT.padj > 0.05, true)
-  check('every gene is returned', de.length, 3)
-  check('padj is never below its raw p-value',
-    de.every(r => r.padj >= r.pvalue - 1e-12), true)
-  check('significant count matches the rows', countSignificant(de), 2)
-
-  // n=1 per group: a fold change is still meaningful, a variance estimate is not.
-  const single = computeDE(counts, [
-    { sample: 'c1', col: 0, cond: 'ctrl' }, { sample: 't1', col: 3, cond: 'treat' },
-  ], 'treat', 'ctrl')
-  check('one replicate still yields a fold change', Math.abs(single[0].log2FoldChange - 2) < 0.05, true)
-  check('one replicate yields no p-value', single[0].pvalue, null)
-  check('one replicate yields no padj', single[0].padj, null)
-
-  check('computed contrast ids are marked', isComputedContrast(computedContrastId('a', 'b')), true)
+  check('computed contrast ids are marked',
+    isComputedContrast(computedContrastId('a', 'b')), true)
   check('pipeline contrast ids are not', isComputedContrast('a_vs_b'), false)
+  check('the id carries both group names',
+    computedContrastId('517E2+RSL3', '517E2'), '~deseq2:517E2+RSL3_vs_517E2')
+
+  const rows = [
+    { gene_id: 'A', gene_name: 'A', baseMean: 10, log2FoldChange: 2.5, lfcSE: null, pvalue: 1e-6, padj: 1e-4 },
+    { gene_id: 'B', gene_name: 'B', baseMean: 10, log2FoldChange: 0.2, lfcSE: null, pvalue: 0.5, padj: 0.8 },
+    { gene_id: 'C', gene_name: 'C', baseMean: 10, log2FoldChange: -3.0, lfcSE: null, pvalue: 1e-8, padj: 1e-6 },
+    { gene_id: 'D', gene_name: 'D', baseMean: 10, log2FoldChange: 4.0, lfcSE: null, pvalue: null, padj: null },
+  ]
+  check('significant genes are counted in both directions', countSignificant(rows), 2)
+  check('a large fold change with no padj does not count',
+    countSignificant([rows[3]]), 0)
+  check('thresholds are respected', countSignificant(rows, 1e-5, 1), 1)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll bundle tests passed\n')

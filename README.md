@@ -25,6 +25,9 @@ sets. Everything runs client-side — **your data never leaves your device** (no
   direction and watch enriched pathways update; drill into a term's genes and their stats.
 - **Gene sets** — define your own sets and get their DEG overlap, an ORA activity readout, and
   a per-sample module score (rank running-sum, mean rank, or mean z-score).
+- **Any comparison** — pick the control and the arms to compare. If your bundle did not export
+  that pair, Studio runs **DESeq2 itself** (R compiled to WebAssembly), so every number in the
+  app comes from DESeq2 — never a lighter substitute. Needs `raw_counts.csv`.
 - **Methods** — a draft Methods paragraph for your manuscript, written from the cutoffs you
   actually set on the other tabs. Change a threshold and the text follows; copy or download it.
 - Every chart exports to **PNG**.
@@ -48,6 +51,7 @@ works. Zip the folder (or drop the folder itself):
 | `meta.json` | project, species, control group, and the list of contrasts |
 | `samples.csv` | `sample, condition, [covariates…]` |
 | `normalized_counts.csv` | `gene_id, [gene_name,] <sample1>, <sample2>, …` |
+| `raw_counts.csv` *(optional)* | same shape, un-normalized — lets Studio run DESeq2 on pairs you did not export |
 | `deg_<contrast>.csv` | `gene_id, gene_name, baseMean, log2FoldChange, lfcSE, pvalue, padj` |
 | `genesets.csv` *(optional)* | `source, set_id, set_name, genes` — enables live ORA |
 
