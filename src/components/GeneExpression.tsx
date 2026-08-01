@@ -32,6 +32,8 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   // For a gene list: one aggregate score, or every gene side by side.
   const [listView, setListView] = useState<'module' | 'genes'>('module')
   const [rowsPref, setRowsPref] = useState<'auto' | number>('auto')
+  // qPCR-style: divide every sample by the control-group mean so control = 1.
+  const [relative, setRelative] = useState(false)
   const colors = conditionColors(meta.conditions)
 
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
@@ -252,10 +254,16 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     const vals = geneVals(g.row)
     const byC: Record<string, number[]> = {}
     ordered.forEach(o => { (byC[o.cond] ||= []).push(vals[o.col]) })
+    // Reference = the contrast's denominator (the control group).
+    const ctrlMean = mean(byC[contrast.denominator] ?? [])
+    // A gene with no expression in the control has no meaningful fold change;
+    // NaN leaves that panel empty rather than drawing an Infinity spike.
+    const toY = (v: number) =>
+      relative ? (ctrlMean > 0 ? v / ctrlMean : NaN) : (log2 ? Math.log2(v + 1) : v)
     return condOrder.filter(c => byC[c]?.length).map(c => ({
       type: 'box', name: c, legendgroup: c, showlegend: false,
       x: byC[c].map(() => c),                       // condition as the category tick
-      y: byC[c].map(v => (log2 ? Math.log2(v + 1) : v)),
+      y: byC[c].map(toY),
       xaxis: `x${ax(gi)}`, yaxis: `y${ax(gi)}`,
       boxpoints: 'all', jitter: 0.4, pointpos: 0, boxmean: true, width: 0.5,
       marker: { color: colors[c], size: 4, opacity: 0.85 },
@@ -265,7 +273,9 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
     }))
   })
 
-  const yTitle = log2 ? 'log2(normalized + 1)' : 'normalized counts'
+  const yTitle = relative
+    ? `relative expression (${contrast.denominator} = 1)`
+    : log2 ? 'log2(normalized + 1)' : 'normalized counts'
   const boxLayout: Record<string, unknown> = {
     grid: { rows: nRows, columns: nCols, pattern: 'independent', ygap: 0.34, xgap: 0.18 },
     // Top margin holds the first row's strip labels; left margin holds the shared
@@ -292,6 +302,15 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
       },
     ],
   }
+  // Baseline at 1 in every panel, so "no change" is readable at a glance.
+  if (relative)
+    boxLayout.shapes = boxGenes.map((_, gi) => ({
+      type: 'line', layer: 'below',
+      xref: `x${ax(gi)} domain`, x0: 0, x1: 1,
+      yref: `y${ax(gi)}`, y0: 1, y1: 1,
+      line: { color: '#94a3b8', width: 1, dash: 'dot' },
+    }))
+
   boxGenes.forEach((_, gi) => {
     boxLayout[`xaxis${ax(gi)}`] = {
       type: 'category', automargin: true, tickfont: { size: 10 },
@@ -367,6 +386,12 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
             )}
             {listView === 'genes' && (
               <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                <input type="checkbox" checked={relative} onChange={e => setRelative(e.target.checked)} />
+                relative to {contrast.denominator} (=1)
+              </label>
+            )}
+            {listView === 'genes' && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">
                 rows
                 <select
                   className="input py-0.5 text-xs"
@@ -395,9 +420,13 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
             <>
               <Plot data={boxTraces} downloadName={`per_gene_box_${contrast.id}`} layout={boxLayout} />
               <p className="mt-1 text-xs text-slate-400">
-                One panel per gene, each with its own y-scale ({log2 ? 'log2 normalized + 1' : 'normalized counts'}) —
+                One panel per gene, each with its own y-scale
+                ({relative
+                  ? `each sample ÷ the ${contrast.denominator} mean, so ${contrast.denominator} averages 1 — dotted line`
+                  : log2 ? 'log2 normalized + 1' : 'normalized counts'}) —
                 free axes keep a low-expressed gene from being flattened by a high-expressed one.
-                Dashed line = group mean. Stars = adjusted p-value (* &lt; 0.05, ** &lt; 0.01, *** &lt; 0.001).
+                {relative && ' Relative mode is always linear, so the log2 checkbox does not apply.'}
+                {' '}Dashed line = group mean. Stars = adjusted p-value (* &lt; 0.05, ** &lt; 0.01, *** &lt; 0.001).
                 {matched.length > MAX_LIST_BOX && ` Showing the first ${MAX_LIST_BOX} of ${matched.length} genes — see the heatmap below for all of them.`}
               </p>
             </>
