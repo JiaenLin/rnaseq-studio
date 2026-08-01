@@ -1,10 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast } from './types'
 import type { GroupSel } from './lib/design'
-import {
-  availableContrasts, contrastMismatch, defaultSelection, groupsWithoutContrast,
-  indexContrasts, matchingContrast,
-} from './lib/design'
+import { defaultSelection, orderSamples } from './lib/design'
+import { computeDE, computedContrastId, countSignificant } from './lib/de'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import Overview from './components/Overview'
@@ -40,6 +38,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
   const [sel, setSel] = useState<GroupSel>({ control: '', groups: [] })
+  // Which selected arm the DEG statistics describe (control is the reference).
+  const [focus, setFocus] = useState<string>('')
   const [showHelp, setShowHelp] = useState(false)
   const [showStart, setShowStart] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -48,25 +48,33 @@ export default function App() {
 
   const adopt = useCallback((b: Bundle) => {
     setBundle(b)
-    setContrastId(b.meta.contrasts[0]?.id ?? '')
-    setSel(defaultSelection(b.meta, b.meta.contrasts[0]))
+    const first = b.meta.contrasts[0]
+    setContrastId(first?.id ?? '')
+    const s = defaultSelection(b.meta, first)
+    setSel(s)
+    setFocus(first?.numerator ?? s.groups[0] ?? '')
     setGene(null)
     setTab('overview')
     setError(null)
   }, [])
 
-  // Switching contrast moves the reference with it; the chosen arms are kept.
+  // Switching contrast moves the reference and the focus arm with it.
   const pickContrast = (id: string) => {
     setContrastId(id)
     const c = bundle?.meta.contrasts.find(x => x.id === id)
-    if (c) setSel(s => ({ control: c.denominator, groups: s.groups.filter(g => g !== c.denominator) }))
+    if (!c) return
+    setSel(s => ({
+      control: c.denominator,
+      groups: s.groups.includes(c.numerator)
+        ? s.groups.filter(g => g !== c.denominator)
+        : [...s.groups.filter(g => g !== c.denominator), c.numerator],
+    }))
+    setFocus(c.numerator)
   }
 
-  // Narrowing to a single arm selects that contrast, when the bundle has it.
   const pickSel = (next: GroupSel) => {
     setSel(next)
-    const m = bundle ? matchingContrast(next, bundle.meta.contrasts) : undefined
-    if (m && m.id !== contrastId) setContrastId(m.id)
+    if (!next.groups.includes(focus)) setFocus(next.groups[0] ?? '')
   }
 
   // Deliberately NOT auto-loaded: a dataset already on screen at first paint
@@ -103,7 +111,39 @@ export default function App() {
 
   const pickGene = (g: string) => { setGene(g); setTab('expression') }
 
-  const contrast = bundle?.meta.contrasts.find(c => c.id === contrastId) ?? bundle?.meta.contrasts[0]
+  /* The comparison every tab reports on.
+   *
+   * If the pipeline computed control-vs-focus, use its statistics. Otherwise
+   * test that pair here and splice the result into a derived bundle under a
+   * synthetic contrast id — so every tab keeps reading degByContrast[id] and
+   * needs no knowledge of where the numbers came from. */
+  const active = useMemo(() => {
+    if (!bundle) return null
+    const pre = bundle.meta.contrasts.find(c => c.denominator === sel.control && c.numerator === focus)
+      ?? (focus ? undefined : bundle.meta.contrasts.find(c => c.id === contrastId))
+    if (pre) return { bundle, contrast: pre, computed: false }
+    if (!focus || !sel.control) {
+      const fallback = bundle.meta.contrasts.find(c => c.id === contrastId) ?? bundle.meta.contrasts[0]
+      return fallback ? { bundle, contrast: fallback, computed: false } : null
+    }
+
+    const ordered = orderSamples(bundle.counts.samples, bundle.samples, sel)
+    const rows = computeDE(bundle.counts, ordered, focus, sel.control)
+    const id = computedContrastId(focus, sel.control)
+    const contrast: Contrast = {
+      id, numerator: focus, denominator: sel.control,
+      label: `${focus} vs ${sel.control}`, deg_file: '',
+      n_deg: countSignificant(rows),
+    }
+    return {
+      bundle: { ...bundle, degByContrast: { ...bundle.degByContrast, [id]: rows } },
+      contrast,
+      computed: true,
+    }
+  }, [bundle, sel, focus, contrastId])
+
+  const viewBundle = active?.bundle ?? bundle
+  const contrast = active?.contrast
 
   return (
     <div className="relative mx-auto flex min-h-full max-w-6xl flex-col px-4"
@@ -162,7 +202,8 @@ export default function App() {
 
       {/* Only worth showing when there is something to choose between. */}
       {bundle && contrast && bundle.meta.conditions.length > 2 && (
-        <GroupBar bundle={bundle} contrast={contrast} sel={sel} onChange={pickSel} onPickContrast={pickContrast} />
+        <GroupBar bundle={bundle} contrast={contrast} sel={sel} focus={focus}
+          computed={!!active?.computed} onChange={pickSel} onFocus={setFocus} />
       )}
 
       {bundle && (
@@ -195,18 +236,18 @@ export default function App() {
         {!loading && bundle && contrast && (
           <ErrorBoundary key={`${tab}:${contrastId}`}>
             {tab === 'overview' &&
-              <Overview bundle={bundle} onOpenContrast={id => { setContrastId(id); setTab('volcano') }} />}
+              <Overview bundle={viewBundle!} />}
             {tab === 'expression' &&
-              <GeneExpression bundle={bundle} contrast={contrast} sel={sel} selectedGene={gene} onSelectGene={pickGene} />}
+              <GeneExpression bundle={viewBundle!} contrast={contrast} sel={sel} selectedGene={gene} onSelectGene={pickGene} />}
             {tab === 'volcano' &&
-              <Volcano bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
+              <Volcano bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'degs' &&
-              <DEGTable bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
+              <DEGTable bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'enrichment' &&
-              <Enrichment bundle={bundle} contrast={contrast} onSelectGene={pickGene} />}
+              <Enrichment bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
             {tab === 'geneset' &&
-              <GeneSetExplorer bundle={bundle} contrast={contrast} sel={sel} onSelectGene={pickGene} />}
-            {tab === 'methods' && <Methods bundle={bundle} contrast={contrast} />}
+              <GeneSetExplorer bundle={viewBundle!} contrast={contrast} sel={sel} onSelectGene={pickGene} />}
+            {tab === 'methods' && <Methods bundle={viewBundle!} contrast={contrast} />}
           </ErrorBoundary>
         )}
       </main>
@@ -233,19 +274,12 @@ export default function App() {
  * every expression view, so a 23-arm design can be narrowed to the three arms a
  * given question is about.
  */
-function GroupBar({ bundle, contrast, sel, onChange, onPickContrast }: {
-  bundle: Bundle; contrast: Contrast; sel: GroupSel
-  onChange: (s: GroupSel) => void; onPickContrast: (id: string) => void
+function GroupBar({ bundle, contrast, sel, focus, computed, onChange, onFocus }: {
+  bundle: Bundle; contrast: Contrast; sel: GroupSel; focus: string; computed: boolean
+  onChange: (s: GroupSel) => void; onFocus: (g: string) => void
 }) {
   const all = bundle.meta.conditions
   const nSamples = (c: string) => bundle.samples.filter(s => s.condition === c).length
-  // Built once per bundle: which comparisons the pipeline actually computed.
-  const idx = useMemo(
-    () => indexContrasts(bundle.meta.contrasts, all),
-    [bundle.meta.contrasts, all])
-  const available = availableContrasts(idx, sel)
-  const missing = groupsWithoutContrast(idx, sel)
-  const mismatch = contrastMismatch(sel, contrast)
 
   const toggle = (c: string) => onChange({
     ...sel,
@@ -264,10 +298,7 @@ function GroupBar({ bundle, contrast, sel, onChange, onPickContrast }: {
               groups: sel.groups.filter(g => g !== e.target.value),
             })}
           >
-            {all.map(c => {
-              const n = (idx.byControl.get(c) ?? []).length
-              return <option key={c} value={c}>{c}{n ? ` — ${n} contrast${n > 1 ? 's' : ''}` : ''}</option>
-            })}
+            {all.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
 
@@ -287,7 +318,7 @@ function GroupBar({ bundle, contrast, sel, onChange, onPickContrast }: {
         <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Compare</span>
         {all.filter(c => c !== sel.control).map(c => {
           const on = sel.groups.includes(c)
-          const testable = (idx.byControl.get(sel.control) ?? []).some(x => x.numerator === c)
+          const testable = bundle.meta.contrasts.some(x => x.denominator === sel.control && x.numerator === c)
           return (
             <button
               key={c}
@@ -302,43 +333,37 @@ function GroupBar({ bundle, contrast, sel, onChange, onPickContrast }: {
         })}
       </div>
 
-      {/* Which precomputed comparisons this selection unlocks. */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-slate-200 pt-2 dark:border-slate-700">
-        <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Available contrasts
+      {/* Which pair the DEG statistics describe. Every selected arm is offered:
+          precomputed when the pipeline ran it, tested here when it did not. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2 dark:border-slate-700">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Statistics for
         </span>
-        {available.length === 0 && (
-          <span className="text-xs text-slate-400">
-            none for this selection — pick an arm marked <span className="opacity-60">•</span>, or change the control.
-          </span>
+        {sel.groups.length === 0 ? (
+          <span className="text-xs text-slate-400">select an arm to compare against {sel.control}</span>
+        ) : (
+          <>
+            <select className="input py-1 text-sm" value={focus} onChange={e => onFocus(e.target.value)}>
+              {sel.groups.map(g => <option key={g} value={g}>{g} vs {sel.control}</option>)}
+            </select>
+            <span className={`pill ${computed
+              ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200'
+              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200'}`}>
+              {computed ? 'computed here' : 'from your pipeline'}
+            </span>
+            {typeof contrast.n_deg === 'number' && (
+              <span className="text-xs text-slate-500">
+                {contrast.n_deg.toLocaleString()} DEGs · padj &lt; 0.05, |log2FC| ≥ 1
+              </span>
+            )}
+          </>
         )}
-        {available.map(c => (
-          <button
-            key={c.id}
-            onClick={() => onPickContrast(c.id)}
-            className={`pressable rounded-md border px-2 py-0.5 text-xs transition ${
-              c.id === contrast.id
-                ? 'border-indigo-500 bg-indigo-500 font-medium text-white'
-                : 'border-slate-300 bg-white text-slate-600 hover:border-indigo-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}
-          >
-            {c.label}{typeof c.n_deg === 'number' ? ` · ${c.n_deg.toLocaleString()} DEGs` : ''}
-          </button>
-        ))}
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
         <b>{sel.groups.length + 1}</b> of {all.length} groups shown, against <b>{sel.control}</b> —
         applies to gene expression, gene sets and the heatmap.
-        {!!missing.length && (
-          <span> {missing.length} selected arm{missing.length > 1 ? 's have' : ' has'} no
-            contrast against {sel.control}, so {missing.length > 1 ? 'they appear' : 'it appears'} in the
-            expression plots without DEG statistics.</span>
-        )}
-        {mismatch && (
-          <span className="text-amber-600 dark:text-amber-400">
-            {' '}DEG statistics still come from <b>{contrast.label}</b>, which this selection does not match.
-          </span>
-        )}
+        {computed && ' Statistics for this pair were not in the bundle, so they were computed here with a Welch t-test on normalized counts (BH-adjusted) — an exploratory screen, not DESeq2.'}
       </p>
     </div>
   )

@@ -10,6 +10,7 @@ import {
   availableContrasts, contrastMismatch, defaultSelection, displayOrder, groupsWithoutContrast,
   indexContrasts, matchingContrast, orderSamples,
 } from '../src/lib/design.ts'
+import { computeDE, computedContrastId, countSignificant, isComputedContrast } from '../src/lib/de.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -132,6 +133,50 @@ console.log('\nAVAILABLE CONTRASTS')
     groupsWithoutContrast(idx, { control: 'ctrl', groups: ['a', 'd'] }), ['d'])
   check('nothing reported when every arm is testable',
     groupsWithoutContrast(idx, { control: 'ctrl', groups: ['a', 'b'] }), [])
+}
+
+console.log('\nON-THE-FLY DIFFERENTIAL EXPRESSION')
+{
+  // 3 reps per group; gene "UP" is exactly 4x in treat, "FLAT" is unchanged.
+  const cols = ['c1', 'c2', 'c3', 't1', 't2', 't3']
+  const ordered = cols.map((s, i) => ({ sample: s, col: i, cond: i < 3 ? 'ctrl' : 'treat' }))
+  const rows = [
+    [100, 104, 96, 400, 416, 384],   // UP    → log2FC ≈ 2
+    [200, 205, 195, 201, 199, 204],  // FLAT  → log2FC ≈ 0
+    [50, 52, 48, 13, 12, 13],        // DOWN  → log2FC ≈ -2
+  ]
+  const counts = {
+    geneIds: ['UP', 'FLAT', 'DOWN'],
+    geneNames: ['UP', 'FLAT', 'DOWN'],
+    samples: cols,
+    values: Float64Array.from(rows.flat()),
+    index: new Map([['UP', 0], ['FLAT', 1], ['DOWN', 2]]),
+  }
+  const de = computeDE(counts, ordered, 'treat', 'ctrl')
+  const by = Object.fromEntries(de.map(r => [r.gene_id, r]))
+
+  check('a 4x gene reports log2FC ≈ 2', Math.abs(by.UP.log2FoldChange - 2) < 0.05, true)
+  check('an unchanged gene reports log2FC ≈ 0', Math.abs(by.FLAT.log2FoldChange) < 0.05, true)
+  // ~-1.9 rather than exactly -2: log2(v+1) pulls low counts toward zero.
+  check('direction is signed against the control',
+    by.DOWN.log2FoldChange < -1.5 && by.DOWN.log2FoldChange > -2.1, true)
+  check('a real change is significant', by.UP.padj < 0.05, true)
+  check('an unchanged gene is not', by.FLAT.padj > 0.05, true)
+  check('every gene is returned', de.length, 3)
+  check('padj is never below its raw p-value',
+    de.every(r => r.padj >= r.pvalue - 1e-12), true)
+  check('significant count matches the rows', countSignificant(de), 2)
+
+  // n=1 per group: a fold change is still meaningful, a variance estimate is not.
+  const single = computeDE(counts, [
+    { sample: 'c1', col: 0, cond: 'ctrl' }, { sample: 't1', col: 3, cond: 'treat' },
+  ], 'treat', 'ctrl')
+  check('one replicate still yields a fold change', Math.abs(single[0].log2FoldChange - 2) < 0.05, true)
+  check('one replicate yields no p-value', single[0].pvalue, null)
+  check('one replicate yields no padj', single[0].padj, null)
+
+  check('computed contrast ids are marked', isComputedContrast(computedContrastId('a', 'b')), true)
+  check('pipeline contrast ids are not', isComputedContrast('a_vs_b'), false)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll bundle tests passed\n')

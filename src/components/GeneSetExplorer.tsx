@@ -153,7 +153,7 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
       type: 'box', name: c, x: per[c].x, y: per[c].y, boxpoints: 'all', jitter: 0.4, pointpos: 0,
       marker: { color: colors[c], size: 6 }, line: { color: colors[c] },
     }))
-  }, [moduleBySet, ordered, meta.conditions, colors])
+  }, [moduleBySet, ordered, sel, colors])
 
   const thr = contrast.padj_threshold ?? 0.05
 
@@ -275,6 +275,7 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
             </div>
             <Plot data={boxTraces} downloadName={`set_activity_${scoreMethod}_${contrast.id}`} layout={{
               margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
+              xaxis: { type: 'category', automargin: true },
               yaxis: { title: scoreMethod === 'runningsum' ? 'enrichment score' : scoreMethod === 'meanrank' ? 'rank score' : 'module score (mean z)', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
             }} style={{ height: 340 }} />

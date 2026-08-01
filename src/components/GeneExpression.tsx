@@ -187,7 +187,7 @@ export default function GeneExpression({ bundle, contrast, sel, selectedGene, on
               margin: { t: 10, r: 10, b: 40, l: 56 }, showlegend: false,
               // A combinatorial design can have 20+ long arm names; automargin
               // grows the bottom edge instead of clipping them.
-              xaxis: { automargin: true, tickangle: order.length > 6 ? -45 : 0,
+              xaxis: { type: 'category', automargin: true, tickangle: order.length > 6 ? -45 : 0,
                 tickfont: { size: order.length > 12 ? 9 : 11 } },
               yaxis: { title: singleYTitle, zeroline: false },
               shapes: relative ? [{
@@ -444,7 +444,7 @@ export default function GeneExpression({ bundle, contrast, sel, selectedGene, on
             <>
               <Plot data={moduleTraces} downloadName={`module_score_${contrast.id}`} layout={{
                 margin: { t: 8, r: 10, b: 36, l: 52 }, showlegend: false,
-                xaxis: { automargin: true, tickangle: moduleTraces.length > 6 ? -45 : 0,
+                xaxis: { type: 'category', automargin: true, tickangle: moduleTraces.length > 6 ? -45 : 0,
                   tickfont: { size: moduleTraces.length > 12 ? 9 : 11 } },
                 yaxis: { title: 'module score', zeroline: true },
                 paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
