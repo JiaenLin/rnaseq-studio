@@ -12,9 +12,10 @@ interface Props {
 }
 
 const MAX_HEATMAP = 120
-// Faceted box plots are one Plotly figure with independent axes; beyond this many
-// panels they stop being readable long before they get slow.
-const MAX_FACETS = 24
+// Grouped box plots stay readable up to roughly this many genes per row; past the
+// total, boxes get too narrow to read and the heatmap below is the better view.
+const GENES_PER_ROW = 10
+const MAX_LIST_BOX = 40
 
 // Single gene OR a gene list, in one tab. One gene → detailed box plot with group
 // means + DEG panel. Many genes → expression heatmap + a per-gene DEG-statistics
@@ -30,6 +31,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   const [suppress, setSuppress] = useState(false)
   // For a gene list: one aggregate score, or every gene side by side.
   const [listView, setListView] = useState<'module' | 'genes'>('module')
+  const [rowsPref, setRowsPref] = useState<'auto' | number>('auto')
   const colors = conditionColors(meta.conditions)
 
   // External pick (from Volcano/DEG table/Enrichment) → load that single gene.
@@ -225,59 +227,79 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   }))
 
   // ── per-gene small multiples ────────────────────────────────────────────────
-  // One figure with `grid.pattern: 'independent'` rather than N <Plot> instances:
-  // each gene keeps its own y-scale (expression spans orders of magnitude between
-  // genes, so a shared axis would flatten the low-expressed ones) at the cost of
-  // a single Plotly instance.
-  const facetGenes = matched.slice(0, MAX_FACETS)
-  const facetCols = Math.min(facetGenes.length, facetGenes.length <= 3 ? facetGenes.length : facetGenes.length <= 8 ? 4 : 5)
-  const facetRows = Math.ceil(facetGenes.length / Math.max(facetCols, 1))
+  // One panel, genes along x, conditions side by side within each gene (boxmode
+  // 'group'). Gene names are axis ticks rather than per-panel titles, which is
+  // what keeps it compact — no repeated axes, no titles to clip. On the default
+  // log2 scale genes are directly comparable, so one shared y-axis is honest.
+  // Long lists wrap onto up to `nrow` stacked rows that share that y-axis.
+  const boxGenes = matched.slice(0, MAX_LIST_BOX)
   const condOrder = meta.conditions.filter(c => ordered.some(o => o.cond === c))
 
   // Plotly names the first axis "x"/"xaxis" and only later ones "x2"/"xaxis2";
   // "xaxis1" is not a recognized layout key and would be silently dropped.
-  const ax = (gi: number) => (gi === 0 ? '' : String(gi + 1))
+  const ax = (i: number) => (i === 0 ? '' : String(i + 1))
 
-  const facetTraces = facetGenes.flatMap((g, gi) => {
-    const vals = geneVals(g.row)
-    const byC: Record<string, number[]> = {}
-    ordered.forEach(o => { (byC[o.cond] ||= []).push(vals[o.col]) })
-    return condOrder.filter(c => byC[c]?.length).map(c => ({
-      type: 'box', name: c, legendgroup: c,
-      showlegend: gi === 0,                       // one shared legend, not one per panel
-      y: byC[c].map(v => (log2 ? Math.log2(v + 1) : v)),
-      xaxis: `x${ax(gi)}`, yaxis: `y${ax(gi)}`,
-      boxpoints: 'all', jitter: 0.5, pointpos: 0, boxmean: true,
-      marker: { color: colors[c], size: 5 }, line: { color: colors[c], width: 1.2 },
-      fillcolor: colors[c] + '22',
-      hovertemplate: `${g.name} · ${c}<br>%{y:.2f}<extra></extra>`,
-    }))
-  })
-
-  // Significance stars keep each panel title informative without a second line.
+  // Significance stars ride along on the tick label — no second line needed.
   const stars = (p: number | null | undefined) =>
     p == null ? '' : p < 0.001 ? ' ***' : p < 0.01 ? ' **' : p < 0.05 ? ' *' : ''
 
-  const facetLayout: Record<string, unknown> = {
-    grid: { rows: facetRows, columns: facetCols, pattern: 'independent', ygap: 0.42, xgap: 0.28 },
-    margin: { t: 26, r: 8, b: 8, l: 44 },
-    height: Math.max(220, facetRows * 168 + 60),
+  const nRows = rowsPref === 'auto'
+    ? Math.min(4, Math.ceil(boxGenes.length / GENES_PER_ROW))
+    : Math.min(rowsPref, boxGenes.length)
+  const perRow = Math.ceil(boxGenes.length / Math.max(nRows, 1))
+  const rowChunks = Array.from({ length: nRows }, (_, r) => boxGenes.slice(r * perRow, (r + 1) * perRow))
+    .filter(chunk => chunk.length)
+
+  const boxTraces = rowChunks.flatMap((chunk, r) => {
+    const labels = chunk.map(g => `${g.name}${stars(degMap.get(g.id.toUpperCase())?.padj)}`)
+    const valsByGene = chunk.map(g => geneVals(g.row))
+    return condOrder.map(c => {
+      const x: string[] = [], y: number[] = []
+      chunk.forEach((_, gi) => {
+        ordered.forEach(o => {
+          if (o.cond !== c) return
+          x.push(labels[gi])
+          y.push(log2 ? Math.log2(valsByGene[gi][o.col] + 1) : valsByGene[gi][o.col])
+        })
+      })
+      return {
+        type: 'box', name: c, legendgroup: c, offsetgroup: c,
+        showlegend: r === 0,               // one legend for the whole panel
+        x, y, xaxis: `x${ax(r)}`, yaxis: `y${ax(r)}`,
+        boxpoints: 'all', jitter: 0.4, pointpos: 0, boxmean: true,
+        marker: { color: colors[c], size: 4, opacity: 0.85 },
+        line: { color: colors[c], width: 1.2 },
+        fillcolor: colors[c] + '22',
+        hovertemplate: `%{x} · ${c}<br>%{y:.2f}<extra></extra>`,
+      }
+    })
+  })
+
+  const yTitle = log2 ? 'log2(normalized + 1)' : 'normalized counts'
+  const boxLayout: Record<string, unknown> = {
+    margin: { t: 34, r: 10, b: 44, l: 58 },
+    height: Math.max(260, rowChunks.length * 232 + 44),
+    boxmode: 'group', boxgap: 0.35, boxgroupgap: 0.15,
     showlegend: true,
-    legend: { orientation: 'h', y: 1.04, x: 0.5, xanchor: 'center', font: { size: 11 } },
-    boxmode: 'group',
+    legend: { orientation: 'h', y: 1.02, yanchor: 'bottom', x: 1, xanchor: 'right', font: { size: 11 } },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     font: { family: 'system-ui, sans-serif' },
-    annotations: facetGenes.map((g, gi) => ({
-      text: `${g.name}${stars(degMap.get(g.id.toUpperCase())?.padj)}`,
-      xref: `x${ax(gi)} domain`, yref: `y${ax(gi)} domain`,
-      x: 0.5, y: 1.14, xanchor: 'center', yanchor: 'bottom',
-      showarrow: false, font: { size: 11.5, weight: 600 },
-    })),
   }
-  facetGenes.forEach((_, gi) => {
-    // Condition names live in the shared legend, so panel ticks stay off.
-    facetLayout[`xaxis${ax(gi)}`] = { showticklabels: false, showgrid: false, zeroline: false }
-    facetLayout[`yaxis${ax(gi)}`] = { tickfont: { size: 9 }, automargin: true, zeroline: false }
+  // A single row needs no grid — one x/y pair is the default subplot.
+  if (rowChunks.length > 1)
+    boxLayout.grid = { rows: rowChunks.length, columns: 1, pattern: 'independent', ygap: 0.3 }
+
+  rowChunks.forEach((chunk, r) => {
+    boxLayout[`xaxis${ax(r)}`] = {
+      type: 'category', automargin: true,
+      tickfont: { size: chunk.length > 8 ? 9.5 : 11 },
+      tickangle: chunk.length > 8 ? -35 : 0,
+    }
+    boxLayout[`yaxis${ax(r)}`] = {
+      title: r === 0 ? yTitle : '', tickfont: { size: 10 }, automargin: true, zeroline: false,
+      // Every row shares the first row's scale, so heights stay comparable.
+      ...(r === 0 ? {} : { matches: 'y' }),
+    }
   })
 
   const shown = matched.slice(0, MAX_HEATMAP)
@@ -321,7 +343,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
               <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                 {listView === 'module'
                   ? `Module score (mean z of ${matched.length} genes)`
-                  : `Per-gene expression (${facetGenes.length} of ${matched.length} genes)`}
+                  : `Per-gene expression (${boxGenes.length}${boxGenes.length < matched.length ? ` of ${matched.length}` : ''} genes)`}
               </h3>
               <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
                 {([['module', 'Module score'], ['genes', 'Per gene']] as const).map(([v, label]) => (
@@ -341,6 +363,19 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
                 {contrast.numerator} vs {contrast.denominator}: Δ {moduleStat.diff.toFixed(2)} · t {moduleStat.t.toFixed(2)} · p {fmtP(moduleStat.p)}
               </span>
             )}
+            {listView === 'genes' && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                rows
+                <select
+                  className="input py-0.5 text-xs"
+                  value={String(rowsPref)}
+                  onChange={e => setRowsPref(e.target.value === 'auto' ? 'auto' : Number(e.target.value))}
+                >
+                  <option value="auto">auto ({rowChunks.length})</option>
+                  {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+            )}
           </div>
 
           {listView === 'module' ? (
@@ -356,12 +391,11 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
             </>
           ) : (
             <>
-              <Plot data={facetTraces} downloadName={`per_gene_box_${contrast.id}`} layout={facetLayout} />
+              <Plot data={boxTraces} downloadName={`per_gene_box_${contrast.id}`} layout={boxLayout} />
               <p className="mt-1 text-xs text-slate-400">
-                One panel per gene, each on its <b>own y-scale</b> ({log2 ? 'log2 normalized + 1' : 'normalized counts'}) —
-                expression differs by orders of magnitude between genes, so a shared axis would flatten the low-expressed ones.
+                {condOrder.join(' vs ')} side by side for each gene, on a shared {log2 ? 'log2' : 'linear'} axis.
                 Dashed line = group mean. Stars = adjusted p-value (* &lt; 0.05, ** &lt; 0.01, *** &lt; 0.001).
-                {matched.length > MAX_FACETS && ` Showing the first ${MAX_FACETS} of ${matched.length} genes.`}
+                {matched.length > MAX_LIST_BOX && ` Showing the first ${MAX_LIST_BOX} of ${matched.length} genes — see the heatmap below for all of them.`}
               </p>
             </>
           )}
