@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Bundle, Contrast } from '../types'
 import type { AnalysisId, CiteStyle } from '../lib/methods'
-import { DEFAULT_TITLE, buildDoc, renderPlain, useMethodsState } from '../lib/methods'
+import { DEFAULT_TITLE, bodySegments, buildDoc, renderHtml, renderPlain, useMethodsState } from '../lib/methods'
 
 interface Props {
   bundle: Bundle
@@ -26,15 +26,28 @@ export default function Methods({ bundle, contrast }: Props) {
   const doc = useMemo(
     () => buildDoc(bundle, contrast, state, include, style, title.trim() || DEFAULT_TITLE),
     [bundle, contrast, state, include, style, title])
-  const plain = renderPlain(doc, style)
+  const plain = renderPlain(doc)
   const isDemo = bundle.meta.engine === 'sample-generator'
 
   const toggle = (id: AnalysisId) => setInclude(prev => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
   })
 
+  // Copy both flavours: Word and Docs take text/html and keep real superscript;
+  // anything else falls back to Unicode superscripts in text/plain.
   const copy = async () => {
-    try { await navigator.clipboard.writeText(plain); setCopied(true) } catch { setCopied(false) }
+    try {
+      const html = renderHtml(doc)
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        })])
+      } else {
+        await navigator.clipboard.writeText(plain)
+      }
+      setCopied(true)
+    } catch { setCopied(false) }
     setTimeout(() => setCopied(false), 1600)
   }
   const download = () => {
@@ -94,6 +107,14 @@ export default function Methods({ bundle, contrast }: Props) {
         </div>
       )}
 
+      {doc.engineUnknown && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          This bundle does not record which tool produced the results
+          (<code className="font-mono text-xs">engine: "{bundle.meta.engine || '—'}"</code>), so the text
+          leaves a bracketed placeholder. Replace it with your tool and add its citation.
+        </div>
+      )}
+
       {!!doc.unseen.length && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
           Showing <b>default</b> thresholds for {doc.unseen.join(', ')}. Open{' '}
@@ -104,7 +125,12 @@ export default function Methods({ bundle, contrast }: Props) {
       <div className="card p-6">
         <article className="mx-auto max-w-[68ch]">
           <h3 className="text-sm font-semibold">{doc.title}</h3>
-          <p className="mt-2 text-[15px] leading-relaxed text-slate-700 dark:text-slate-200">{doc.body}</p>
+          <p className="mt-2 text-[15px] leading-relaxed text-slate-700 dark:text-slate-200">
+            {bodySegments(doc.body).map((seg, i) =>
+              seg.sup
+                ? <sup key={i} className="font-medium text-indigo-600 dark:text-indigo-300">{seg.v}</sup>
+                : <span key={i}>{seg.v}</span>)}
+          </p>
 
           <h3 className="mt-6 text-sm font-semibold">References</h3>
           <ol className="mt-2 space-y-1.5 text-[13.5px] leading-relaxed text-slate-600 dark:text-slate-300">

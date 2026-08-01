@@ -159,14 +159,25 @@ function sourceRef(src: string): string | null {
   return null
 }
 
-/** Map a bundle's engine string to a method name and its citation key(s). */
-export function engineName(engine: string): { name: string; keys: string[] } {
-  const e = engine.toLowerCase()
-  if (e.includes('deseq')) return { name: 'DESeq2', keys: ['deseq2'] }
-  if (e.includes('limma') || e.includes('voom')) return { name: 'limma-voom', keys: ['voom', 'limma'] }
-  if (e.includes('edger')) return { name: 'edgeR', keys: ['edger'] }
-  if (e.includes('sample-generator')) return { name: 'a simulated demo dataset', keys: [] }
-  return { name: 'the upstream analysis pipeline', keys: [] }
+/**
+ * Name the tool that actually produced the results.
+ *
+ * `meta.engine` is a deployment label, not a tool name — bundles from the R
+ * exporter say "desktop-R" — so fall back to `meta.counts_unit`, which records
+ * the normalization ("DESeq2 normalized (median-of-ratios)") and identifies the
+ * package. If neither names a tool, emit a bracketed placeholder: a manuscript
+ * needs a real tool name, and a vague filler phrase would be worse than an
+ * obvious blank the author has to fill.
+ */
+export function engineName(engine: string, countsUnit = ''): { name: string; keys: string[]; unknown: boolean } {
+  if (engine.toLowerCase().includes('sample-generator'))
+    return { name: 'a simulated demo dataset', keys: [], unknown: false }
+
+  const hay = `${engine} ${countsUnit}`.toLowerCase()
+  if (hay.includes('deseq')) return { name: 'DESeq2', keys: ['deseq2'], unknown: false }
+  if (hay.includes('limma') || hay.includes('voom')) return { name: 'limma-voom', keys: ['voom', 'limma'], unknown: false }
+  if (hay.includes('edger')) return { name: 'edgeR', keys: ['edger'], unknown: false }
+  return { name: '[differential expression tool — add name and citation]', keys: [], unknown: true }
 }
 
 /* ───────────────────────────── generation ───────────────────────────── */
@@ -198,6 +209,8 @@ export interface MethodsDoc {
   refs: { n: number; text: string }[]
   /** Analyses whose numbers are still defaults because that tab was never opened. */
   unseen: string[]
+  /** True when the bundle never named the tool that produced the results. */
+  engineUnknown: boolean
 }
 
 export const DEFAULT_TITLE = 'RNA-seq analysis'
@@ -221,7 +234,7 @@ export function buildDoc(
   title = DEFAULT_TITLE,
 ): MethodsDoc {
   const { meta } = bundle
-  const eng = engineName(meta.engine)
+  const eng = engineName(meta.engine, meta.counts_unit)
   const nNum = bundle.samples.filter(x => x.condition === contrast.numerator).length
   const nDen = bundle.samples.filter(x => x.condition === contrast.denominator).length
   const species = meta.species && !/unknown/i.test(meta.species) ? ` (${meta.species})` : ''
@@ -291,8 +304,20 @@ export function buildDoc(
   did.push('figures')
   sentences.push(`${list(did)} were produced with RNA-seq Studio ${STUDIO_VERSION}{{studio}}.`)
 
-  return { title, ...resolveCitations(sentences.join(' '), style), unseen }
+  return {
+    title,
+    ...resolveCitations(sentences.join(' '), style),
+    unseen,
+    engineUnknown: include.has('de') && eng.unknown,
+  }
 }
+
+// Private-use sentinels wrap a numbered citation inside `body`, so the same
+// string can be rendered as real <sup> on screen and in the HTML clipboard
+// flavour, or as Unicode superscripts in plain text.
+const SUP_OPEN = '\uE000'
+const SUP_CLOSE = '\uE001'
+const SUP_RE = new RegExp(`${SUP_OPEN}(.+?)${SUP_CLOSE}`, 'g')
 
 /**
  * Replace {{key}} / {{key,key}} markers with citations, numbering them in order
@@ -305,13 +330,50 @@ function resolveCitations(text: string, style: CiteStyle) {
     const keys = group.split(',').filter(k => REFS[k])
     if (!keys.length) return ''
     for (const k of keys) if (!order.includes(k)) order.push(k)
+    // Superscripts attach to the preceding word — no space before them.
     return style === 'numbered'
-      ? ` (${keys.map(k => order.indexOf(k) + 1).join(', ')})`
+      ? `${SUP_OPEN}${keys.map(k => order.indexOf(k) + 1).join(',')}${SUP_CLOSE}`
       : ` (${keys.map(k => REFS[k].short).join('; ')})`
   })
   return { body, refs: order.map((k, i) => ({ n: i + 1, text: REFS[k].full })) }
 }
 
-export const renderPlain = (d: MethodsDoc, style: CiteStyle) =>
-  `${d.title}\n\n${d.body}\n\nReferences\n` +
-  d.refs.map((r, i) => (style === 'numbered' ? `${r.n}. ${r.text}` : `${i + 1}. ${r.text}`)).join('\n')
+/** Split a body into runs of plain text and superscript citations, for React. */
+export function bodySegments(body: string): { sup: boolean; v: string }[] {
+  const out: { sup: boolean; v: string }[] = []
+  let last = 0
+  for (const m of body.matchAll(SUP_RE)) {
+    const i = m.index ?? 0
+    if (i > last) out.push({ sup: false, v: body.slice(last, i) })
+    out.push({ sup: true, v: m[1] })
+    last = i + m[0].length
+  }
+  if (last < body.length) out.push({ sup: false, v: body.slice(last) })
+  return out
+}
+
+const SUP_DIGITS: Record<string, string> = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+  '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+}
+const toSupText = (d: string) => [...d].map(c => SUP_DIGITS[c] ?? c).join('')
+
+const escHtml = (s: string) =>
+  s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
+
+export const renderPlain = (d: MethodsDoc) =>
+  `${d.title}\n\n${d.body.replace(SUP_RE, (_m, g: string) => toSupText(g))}\n\nReferences\n` +
+  d.refs.map(r => `${r.n}. ${r.text}`).join('\n')
+
+/**
+ * Rich-text flavour for the clipboard. Word and Google Docs prefer text/html,
+ * so citations paste as real superscript rather than Unicode lookalikes.
+ * References are numbered paragraphs, not an <ol>, so nothing renumbers on paste.
+ */
+export const renderHtml = (d: MethodsDoc) => {
+  const body = bodySegments(d.body)
+    .map(s => (s.sup ? `<sup>${escHtml(s.v)}</sup>` : escHtml(s.v)))
+    .join('')
+  return `<p><b>${escHtml(d.title)}</b></p><p>${body}</p><p><b>References</b></p>` +
+    d.refs.map(r => `<p>${r.n}. ${escHtml(r.text)}</p>`).join('')
+}
