@@ -138,9 +138,22 @@ export default function App() {
         computed: true,
       }
     }
-    const fallback = bundle.meta.contrasts.find(c => c.id === contrastId) ?? bundle.meta.contrasts[0]
-    return fallback ? { bundle, contrast: fallback, computed: false } : null
-  }, [bundle, sel.control, focus, contrastId, computed])
+    // No statistics for this pair yet. Falling back to another contrast here
+    // would paint a different comparison's volcano and DEG table under this
+    // pair's label — plausible numbers belonging to another question. Return a
+    // contrast with no rows instead, and let the tabs say so.
+    return {
+      bundle,
+      contrast: {
+        id: `~pending:${focus}_vs_${sel.control}`,
+        numerator: focus, denominator: sel.control,
+        label: focus && sel.control ? `${focus} vs ${sel.control}` : 'no comparison selected',
+        deg_file: '',
+      } as Contrast,
+      computed: false,
+      pending: true,
+    }
+  }, [bundle, sel.control, focus, computed])
 
   /** DESeq2 for the current pair, on explicit request — it is a real analysis. */
   const runPair = async () => {
@@ -160,6 +173,8 @@ export default function App() {
 
   const viewBundle = active?.bundle ?? bundle
   const contrast = active?.contrast
+  // True when the selected pair has no DESeq2 result yet.
+  const pending = !!active?.pending
 
   return (
     <div className="relative mx-auto flex min-h-full max-w-6xl flex-col px-4"
@@ -254,20 +269,35 @@ export default function App() {
           />
         )}
         {!loading && bundle && contrast && (
-          <ErrorBoundary key={`${tab}:${contrastId}`}>
-            {tab === 'overview' &&
-              <Overview bundle={viewBundle!} />}
-            {tab === 'expression' &&
-              <GeneExpression bundle={viewBundle!} contrast={contrast} sel={sel} selectedGene={gene} onSelectGene={pickGene} />}
-            {tab === 'volcano' &&
-              <Volcano bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
-            {tab === 'degs' &&
-              <DEGTable bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
-            {tab === 'enrichment' &&
-              <Enrichment bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
-            {tab === 'geneset' &&
-              <GeneSetExplorer bundle={viewBundle!} contrast={contrast} sel={sel} onSelectGene={pickGene} />}
-            {tab === 'methods' && <Methods bundle={viewBundle!} contrast={contrast} />}
+          <ErrorBoundary key={`${tab}:${contrast.id}`}>
+            {tab === 'overview' && <Overview bundle={viewBundle!} />}
+            {/* Expression needs no statistics, so it stays available while a pair
+                is uncomputed; its DEG-derived panels hide themselves. */}
+            {tab === 'expression' && (
+              <GeneExpression
+                bundle={viewBundle!} contrast={contrast} sel={sel} hasStats={!pending}
+                selectedGene={gene} onSelectGene={pickGene} />
+            )}
+            {/* Everything below is statistics. With none for this pair, showing
+                anything at all would be showing another comparison's numbers. */}
+            {tab !== 'overview' && tab !== 'expression' && pending && (
+              <NeedsStats
+                contrast={contrast} canCompute={!!bundle.rawCounts} running={running}
+                runLog={runLog} onRun={runPair} />
+            )}
+            {!pending && (
+              <>
+                {tab === 'volcano' &&
+                  <Volcano bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
+                {tab === 'degs' &&
+                  <DEGTable bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
+                {tab === 'enrichment' &&
+                  <Enrichment bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
+                {tab === 'geneset' &&
+                  <GeneSetExplorer bundle={viewBundle!} contrast={contrast} sel={sel} onSelectGene={pickGene} />}
+                {tab === 'methods' && <Methods bundle={viewBundle!} contrast={contrast} />}
+              </>
+            )}
           </ErrorBoundary>
         )}
       </main>
@@ -284,6 +314,43 @@ export default function App() {
           onClose={() => setShowStart(false)}
           onFormat={() => { setShowStart(false); setShowHelp(true) }}
         />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Shown instead of a statistics tab when the selected pair has no DESeq2 result.
+ * Deliberately blank of numbers: the alternative is displaying a different
+ * comparison's volcano under this pair's name.
+ */
+function NeedsStats({ contrast, canCompute, running, runLog, onRun }: {
+  contrast: Contrast; canCompute: boolean; running: boolean; runLog: string; onRun: () => void
+}) {
+  return (
+    <div className="card mx-auto mt-6 max-w-xl p-8 text-center">
+      <h3 className="text-base font-semibold">No DESeq2 result for this comparison yet</h3>
+      <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
+        <b>{contrast.label}</b> was not exported by your pipeline
+        {canCompute
+          ? ', so nothing is shown here until it has been tested. Running it takes a few seconds after R loads.'
+          : ', and this bundle has no raw counts to test it with.'}
+      </p>
+      {canCompute ? (
+        <>
+          <button className="btn btn-primary mt-4" disabled={running} onClick={onRun}>
+            {running ? 'Running DESeq2…' : 'Run DESeq2 for this pair'}
+          </button>
+          {running && <p className="mt-2 text-xs text-slate-400">{runLog}</p>}
+          {!running && runLog.startsWith('Failed') && (
+            <p className="mt-2 text-xs text-red-500">{runLog}</p>
+          )}
+        </>
+      ) : (
+        <p className="mt-3 text-xs text-slate-400">
+          Re-export the bundle with <code className="font-mono">raw_counts.csv</code> — DESeq2 models
+          raw counts, so a normalized matrix cannot stand in. Or pick a pair your pipeline exported.
+        </p>
       )}
     </div>
   )

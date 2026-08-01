@@ -10,6 +10,8 @@ interface Props {
   bundle: Bundle
   contrast: Contrast
   sel: GroupSel
+  /** False while the selected pair has no DESeq2 result — hide DEG panels. */
+  hasStats: boolean
   selectedGene: string | null
   onSelectGene: (gene: string) => void
 }
@@ -23,7 +25,7 @@ const MAX_LIST_BOX = 24
 // Single gene OR a gene list, in one tab. One gene → detailed box plot with group
 // means + DEG panel. Many genes → expression heatmap + a per-gene DEG-statistics
 // bar plot + a per-gene DEG table.
-export default function GeneExpression({ bundle, contrast, sel, selectedGene, onSelectGene }: Props) {
+export default function GeneExpression({ bundle, contrast, sel, hasStats, selectedGene, onSelectGene }: Props) {
   const { counts, meta } = bundle
   const S = counts.samples.length
   const [text, setText] = useState('')
@@ -203,7 +205,7 @@ export default function GeneExpression({ bundle, contrast, sel, selectedGene, on
           </div>
 
           <div className="space-y-4">
-            <div className="card p-4">
+            {hasStats && <div className="card p-4">
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{g.name}</h3>
               <dl className="space-y-2 text-sm">
                 <Row label="log2 fold change" value={d?.log2FoldChange?.toFixed(3)} hint={`${contrast.numerator} vs ${contrast.denominator}`} />
@@ -212,7 +214,7 @@ export default function GeneExpression({ bundle, contrast, sel, selectedGene, on
                 <Row label="base mean" value={d?.baseMean?.toFixed(1)} />
                 <div className="pt-1">{sig(d, contrast)}</div>
               </dl>
-            </div>
+            </div>}
             <div className="card p-4">
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Mean expression per group</h4>
               <table className="w-full text-sm">
@@ -481,6 +483,7 @@ export default function GeneExpression({ bundle, contrast, sel, selectedGene, on
           }} />
         </div>
 
+        {hasStats && <>
         <div className="card p-4">
           <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
             Per-gene DEG statistics — log2FC ({contrast.numerator} vs {contrast.denominator})
@@ -530,6 +533,7 @@ export default function GeneExpression({ bundle, contrast, sel, selectedGene, on
           </div>
           <p className="mt-2 text-xs text-slate-400"><b>Combined score</b> = −log10(p-value) × log2FC.</p>
         </div>
+        </>}
       </div>
     </div>
   )
