@@ -12,10 +12,10 @@ interface Props {
 }
 
 const MAX_HEATMAP = 120
-// Grouped box plots stay readable up to roughly this many genes per row; past the
-// total, boxes get too narrow to read and the heatmap below is the better view.
-const GENES_PER_ROW = 10
-const MAX_LIST_BOX = 40
+// Faceted panels stay readable up to roughly this many per row; past the total,
+// panels get too small to read and the heatmap below is the better view.
+const PANELS_PER_ROW = 4
+const MAX_LIST_BOX = 24
 
 // Single gene OR a gene list, in one tab. One gene → detailed box plot with group
 // means + DEG panel. Many genes → expression heatmap + a per-gene DEG-statistics
@@ -227,11 +227,12 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   }))
 
   // ── per-gene small multiples ────────────────────────────────────────────────
-  // One panel, genes along x, conditions side by side within each gene (boxmode
-  // 'group'). Gene names are axis ticks rather than per-panel titles, which is
-  // what keeps it compact — no repeated axes, no titles to clip. On the default
-  // log2 scale genes are directly comparable, so one shared y-axis is honest.
-  // Long lists wrap onto up to `nrow` stacked rows that share that y-axis.
+  // Small multiples, the way Seurat's VlnPlot and ggplot's
+  // facet_wrap(scales = "free_y") lay them out: one panel per gene, each with its
+  // OWN x and y axis, gene name on a strip above, condition names as x ticks (so
+  // no legend is needed), and free y so a low-expressed gene isn't flattened by a
+  // high-expressed one. Built as a single Plotly figure via grid.pattern
+  // 'independent' rather than N <Plot> instances.
   const boxGenes = matched.slice(0, MAX_LIST_BOX)
   const condOrder = meta.conditions.filter(c => ordered.some(o => o.cond === c))
 
@@ -239,66 +240,67 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
   // "xaxis1" is not a recognized layout key and would be silently dropped.
   const ax = (i: number) => (i === 0 ? '' : String(i + 1))
 
-  // Significance stars ride along on the tick label — no second line needed.
   const stars = (p: number | null | undefined) =>
     p == null ? '' : p < 0.001 ? ' ***' : p < 0.01 ? ' **' : p < 0.05 ? ' *' : ''
 
   const nRows = rowsPref === 'auto'
-    ? Math.min(4, Math.ceil(boxGenes.length / GENES_PER_ROW))
+    ? Math.min(4, Math.ceil(boxGenes.length / PANELS_PER_ROW))
     : Math.min(rowsPref, boxGenes.length)
-  const perRow = Math.ceil(boxGenes.length / Math.max(nRows, 1))
-  const rowChunks = Array.from({ length: nRows }, (_, r) => boxGenes.slice(r * perRow, (r + 1) * perRow))
-    .filter(chunk => chunk.length)
+  const nCols = Math.ceil(boxGenes.length / Math.max(nRows, 1))
 
-  const boxTraces = rowChunks.flatMap((chunk, r) => {
-    const labels = chunk.map(g => `${g.name}${stars(degMap.get(g.id.toUpperCase())?.padj)}`)
-    const valsByGene = chunk.map(g => geneVals(g.row))
-    return condOrder.map(c => {
-      const x: string[] = [], y: number[] = []
-      chunk.forEach((_, gi) => {
-        ordered.forEach(o => {
-          if (o.cond !== c) return
-          x.push(labels[gi])
-          y.push(log2 ? Math.log2(valsByGene[gi][o.col] + 1) : valsByGene[gi][o.col])
-        })
-      })
-      return {
-        type: 'box', name: c, legendgroup: c, offsetgroup: c,
-        showlegend: r === 0,               // one legend for the whole panel
-        x, y, xaxis: `x${ax(r)}`, yaxis: `y${ax(r)}`,
-        boxpoints: 'all', jitter: 0.4, pointpos: 0, boxmean: true,
-        marker: { color: colors[c], size: 4, opacity: 0.85 },
-        line: { color: colors[c], width: 1.2 },
-        fillcolor: colors[c] + '22',
-        hovertemplate: `%{x} · ${c}<br>%{y:.2f}<extra></extra>`,
-      }
-    })
+  const boxTraces = boxGenes.flatMap((g, gi) => {
+    const vals = geneVals(g.row)
+    const byC: Record<string, number[]> = {}
+    ordered.forEach(o => { (byC[o.cond] ||= []).push(vals[o.col]) })
+    return condOrder.filter(c => byC[c]?.length).map(c => ({
+      type: 'box', name: c, legendgroup: c, showlegend: false,
+      x: byC[c].map(() => c),                       // condition as the category tick
+      y: byC[c].map(v => (log2 ? Math.log2(v + 1) : v)),
+      xaxis: `x${ax(gi)}`, yaxis: `y${ax(gi)}`,
+      boxpoints: 'all', jitter: 0.4, pointpos: 0, boxmean: true, width: 0.5,
+      marker: { color: colors[c], size: 4, opacity: 0.85 },
+      line: { color: colors[c], width: 1.2 },
+      fillcolor: colors[c] + '22',
+      hovertemplate: `${g.name} · ${c}<br>%{y:.2f}<extra></extra>`,
+    }))
   })
 
   const yTitle = log2 ? 'log2(normalized + 1)' : 'normalized counts'
   const boxLayout: Record<string, unknown> = {
-    margin: { t: 34, r: 10, b: 44, l: 58 },
-    height: Math.max(260, rowChunks.length * 232 + 44),
-    boxmode: 'group', boxgap: 0.35, boxgroupgap: 0.15,
-    showlegend: true,
-    legend: { orientation: 'h', y: 1.02, yanchor: 'bottom', x: 1, xanchor: 'right', font: { size: 11 } },
+    grid: { rows: nRows, columns: nCols, pattern: 'independent', ygap: 0.34, xgap: 0.18 },
+    // Top margin holds the first row's strip labels; left margin holds the shared
+    // y-axis title. Both were what got clipped before.
+    margin: { t: 28, r: 10, b: 30, l: 64 },
+    height: Math.max(230, nRows * 196 + 46),
+    showlegend: false,                              // x ticks name the conditions
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { family: 'system-ui, sans-serif' },
+    font: { family: 'system-ui, sans-serif', size: 11 },
+    annotations: [
+      // Strip label above every panel.
+      ...boxGenes.map((g, gi) => ({
+        text: `${g.name}${stars(degMap.get(g.id.toUpperCase())?.padj)}`,
+        xref: `x${ax(gi)} domain`, yref: `y${ax(gi)} domain`,
+        x: 0.5, y: 1.02, xanchor: 'center', yanchor: 'bottom',
+        showarrow: false, font: { size: 11.5 },
+      })),
+      // One rotated y-axis title for the whole figure, ggplot-style.
+      {
+        text: yTitle, textangle: -90, showarrow: false,
+        xref: 'paper', yref: 'paper', x: 0, y: 0.5,
+        xanchor: 'right', yanchor: 'middle', xshift: -46,
+        font: { size: 11 },
+      },
+    ],
   }
-  // A single row needs no grid — one x/y pair is the default subplot.
-  if (rowChunks.length > 1)
-    boxLayout.grid = { rows: rowChunks.length, columns: 1, pattern: 'independent', ygap: 0.3 }
-
-  rowChunks.forEach((chunk, r) => {
-    boxLayout[`xaxis${ax(r)}`] = {
-      type: 'category', automargin: true,
-      tickfont: { size: chunk.length > 8 ? 9.5 : 11 },
-      tickangle: chunk.length > 8 ? -35 : 0,
+  boxGenes.forEach((_, gi) => {
+    boxLayout[`xaxis${ax(gi)}`] = {
+      type: 'category', automargin: true, tickfont: { size: 10 },
+      showgrid: false, zeroline: false,
     }
-    boxLayout[`yaxis${ax(r)}`] = {
-      title: r === 0 ? yTitle : '', tickfont: { size: 10 }, automargin: true, zeroline: false,
-      // Every row shares the first row's scale, so heights stay comparable.
-      ...(r === 0 ? {} : { matches: 'y' }),
+    boxLayout[`yaxis${ax(gi)}`] = {
+      // Free y — the whole point of a faceted expression panel.
+      tickfont: { size: 9.5 }, nticks: 5, automargin: true, zeroline: false,
+      showgrid: true, gridcolor: 'rgba(148,163,184,0.25)',
     }
   })
 
@@ -371,7 +373,7 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
                   value={String(rowsPref)}
                   onChange={e => setRowsPref(e.target.value === 'auto' ? 'auto' : Number(e.target.value))}
                 >
-                  <option value="auto">auto ({rowChunks.length})</option>
+                  <option value="auto">auto ({nRows}×{nCols})</option>
                   {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               </label>
@@ -393,7 +395,8 @@ export default function GeneExpression({ bundle, contrast, selectedGene, onSelec
             <>
               <Plot data={boxTraces} downloadName={`per_gene_box_${contrast.id}`} layout={boxLayout} />
               <p className="mt-1 text-xs text-slate-400">
-                {condOrder.join(' vs ')} side by side for each gene, on a shared {log2 ? 'log2' : 'linear'} axis.
+                One panel per gene, each with its own y-scale ({log2 ? 'log2 normalized + 1' : 'normalized counts'}) —
+                free axes keep a low-expressed gene from being flattened by a high-expressed one.
                 Dashed line = group mean. Stars = adjusted p-value (* &lt; 0.05, ** &lt; 0.01, *** &lt; 0.001).
                 {matched.length > MAX_LIST_BOX && ` Showing the first ${MAX_LIST_BOX} of ${matched.length} genes — see the heatmap below for all of them.`}
               </p>

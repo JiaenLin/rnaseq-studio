@@ -68,7 +68,13 @@ export default function Plot({ data, layout, config, className, style, onPointCl
           </button>
         </div>
       )}
-      <div ref={ref} className={className} style={{ width: '100%', height: 440, ...style }} />
+      {/* The container must follow layout.height, or a tall plot (faceted panels,
+          a long heatmap) draws past a fixed-height div and overlaps what follows. */}
+      <div
+        ref={ref}
+        className={className}
+        style={{ width: '100%', height: typeof layout?.height === 'number' ? layout.height : 440, ...style }}
+      />
     </div>
   )
 }
