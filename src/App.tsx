@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { Bundle } from './types'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
@@ -30,7 +30,7 @@ const TABS: { id: Tab; label: string }[] = [
 export default function App() {
   const [bundle, setBundle] = useState<Bundle | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [contrastId, setContrastId] = useState<string>('')
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
@@ -48,8 +48,10 @@ export default function App() {
     setError(null)
   }, [])
 
-  // Auto-load the bundled sample dataset on first paint.
-  useEffect(() => {
+  // Deliberately NOT auto-loaded: a dataset already on screen at first paint
+  // reads as "your data", and every number on it is someone else's.
+  const loadDemo = useCallback(() => {
+    setLoading(true)
     loadBundleFromUrl(`${import.meta.env.BASE_URL}sample/`)
       .then(adopt)
       .catch(e => setError(String(e?.message || e)))
@@ -102,16 +104,21 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* On the landing screen the actions live in the hero, not up here. */}
           {bundle && bundle.meta.contrasts.length > 1 && (
             <select className="input" value={contrastId} onChange={e => setContrastId(e.target.value)}>
               {bundle.meta.contrasts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           )}
-          <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
-          <button className="btn" onClick={() => fileRef.current?.click()} title="Open an unzipped bundle folder">folder…</button>
-          <button className="btn" onClick={() => setShowStart(true)} title="Get a bundle from your counts or your raw FASTQ files">
-            No results yet?
-          </button>
+          {bundle && (
+            <>
+              <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
+              <button className="btn" onClick={() => fileRef.current?.click()} title="Open an unzipped bundle folder">folder…</button>
+              <button className="btn" onClick={() => setShowStart(true)} title="Get a bundle from your counts or your raw FASTQ files">
+                No results yet?
+              </button>
+            </>
+          )}
           <button className="btn" onClick={() => setShowHelp(true)} title="What is a bundle & how to make one">?</button>
           <input ref={zipRef} type="file" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) loadZip(f); e.target.value = '' }} />
@@ -122,11 +129,13 @@ export default function App() {
       </header>
 
       {bundle?.meta.engine === 'sample-generator' && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200">
-          <span>👋 This is a <b>demo dataset</b>. Drop a <b>.zip</b> bundle anywhere (or use the button) to explore your data — it never leaves your browser.</span>
-          <button className="btn ml-auto py-1" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
-          <button className="btn py-1" onClick={() => setShowStart(true)}>No results yet?</button>
-          <button className="btn py-1" onClick={() => setShowHelp(true)}>Format</button>
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+          <span className="pill bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-100">DEMO</span>
+          <span>
+            <b>Simulated data — not your results.</b> Every number here is randomly generated.
+          </span>
+          <button className="btn ml-auto py-1" onClick={() => zipRef.current?.click()}>⭱ Open your bundle</button>
+          <button className="btn py-1" onClick={() => { setBundle(null); setError(null) }}>Exit demo</button>
         </div>
       )}
 
@@ -146,8 +155,16 @@ export default function App() {
           <Center>
             <p className="text-red-500">Could not load a result bundle.</p>
             <p className="mt-1 max-w-md text-xs text-slate-400">{error}</p>
-            <button className="btn mt-4" onClick={() => fileRef.current?.click()}>Open an analysis folder</button>
+            <button className="btn mt-4" onClick={() => setError(null)}>← Back</button>
           </Center>
+        )}
+        {!loading && !error && !bundle && (
+          <Landing
+            onOpenZip={() => zipRef.current?.click()}
+            onOpenFolder={() => fileRef.current?.click()}
+            onDemo={loadDemo}
+            onFormat={() => setShowHelp(true)}
+          />
         )}
         {!loading && bundle && contrast && (
           <ErrorBoundary key={`${tab}:${contrastId}`}>
@@ -181,6 +198,92 @@ export default function App() {
           onFormat={() => { setShowStart(false); setShowHelp(true) }}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * First screen. Nothing is loaded until the visitor chooses — a dataset sitting
+ * on screen at first paint reads as "your data", and every number on it belongs
+ * to someone else. The demo is offered explicitly, and clearly labelled.
+ */
+function Landing({ onOpenZip, onOpenFolder, onDemo, onFormat }: {
+  onOpenZip: () => void; onOpenFolder: () => void; onDemo: () => void; onFormat: () => void
+}) {
+  return (
+    <div className="mx-auto max-w-3xl py-6">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+          Explore your RNA-seq results in the browser
+        </h2>
+        <p className="mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-slate-500">
+          Search any gene, scan volcano plots, run tunable enrichment, score your own gene sets,
+          and draft your Methods paragraph — from a result bundle your pipeline already produced.
+        </p>
+      </div>
+
+      {/* Primary action. The whole card is the drop target the page already listens on. */}
+      <div className="card mt-8 border-dashed p-8 text-center">
+        <p className="text-base font-medium">Open your result bundle</p>
+        <p className="mt-1 text-sm text-slate-500">
+          Drop a <b>.zip</b> anywhere on this page, or pick one below.
+        </p>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <button className="btn btn-primary" onClick={onOpenZip}>⭱ Open bundle (.zip)</button>
+          <button className="btn" onClick={onOpenFolder}>Open a folder…</button>
+        </div>
+        <p className="mt-4 text-xs text-slate-400">
+          Everything runs client-side — your data never leaves this device.
+        </p>
+      </div>
+
+      <div className="mt-8">
+        <p className="text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Don't have a bundle yet?
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <StartCard
+            step="You have"
+            what="A count matrix"
+            detail="Genes × samples, from featureCounts, STAR, Salmon, or your core facility."
+            app="RNA-seq Lab"
+            does="Runs DESeq2 or limma-voom in your browser and returns a bundle."
+            href={LAB_URL}
+            accent="indigo"
+          />
+          <StartCard
+            step="You have"
+            what="Only raw FASTQ"
+            detail="The folder your sequencer or provider delivered."
+            app="RNA-seq Service"
+            does="Scans it, names your samples, and builds an analysis request."
+            href={SERVICE_URL}
+            accent="emerald"
+          />
+          <div className="flex flex-col rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">You have</div>
+            <div className="mt-1 text-sm font-semibold">Your own pipeline</div>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
+              nf-core, snakemake, or a script of your own.
+            </p>
+            <div className="mt-3 inline-flex w-fit rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+              Bundle format
+            </div>
+            <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-500">
+              Five plain CSV files plus a small JSON manifest — emit those and it opens here.
+            </p>
+            <button className="btn mt-3 justify-center" onClick={onFormat}>See the format</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-8 text-center">
+        <button className="btn" onClick={onDemo}>Explore a demo dataset instead →</button>
+        <p className="mt-2 text-xs text-slate-400">
+          Simulated data, for trying the interface. It is labelled throughout so it is never
+          mistaken for your own.
+        </p>
+      </div>
     </div>
   )
 }
