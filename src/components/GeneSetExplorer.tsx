@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import type { GroupSel } from '../lib/design'
 import { displayOrder, orderSamples } from '../lib/design'
-import { conditionColors } from '../lib/palette'
+import { conditionColors, contrastTitle } from '../lib/palette'
 import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
 import { computeSortedOrders, computeRankPositions, meanRankScore, rankRunningSum } from '../lib/scores'
@@ -185,7 +185,9 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
         <>
           {/* set-level DEG overlap + ORA enrichment */}
           <div className="card p-4">
-            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Set enrichment &amp; DEG overlap</h3>
+            <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Set enrichment &amp; DEG overlap — {contrast.label}
+            </h3>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
@@ -225,7 +227,9 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
           {selSet && (
             <div className="card p-4">
               <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{selSet.name} — per-gene DEG statistics</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  {selSet.name} — per-gene DEG statistics ({contrast.label})
+                </h3>
                 <span className="text-sm text-slate-500">{selected?.k}/{selected?.K} genes are DEGs</span>
               </div>
               <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100 dark:border-slate-800">
@@ -274,7 +278,8 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
               </label>
             </div>
             <Plot data={boxTraces} downloadName={`set_activity_${scoreMethod}_${contrast.id}`} layout={{
-              margin: { t: 8, r: 10, b: 50, l: 52 }, boxmode: 'group',
+              title: contrastTitle(`Gene-set activity — ${contrast.label}`),
+              margin: { t: 34, r: 10, b: 50, l: 52 }, boxmode: 'group',
               xaxis: { type: 'category', automargin: true },
               yaxis: { title: scoreMethod === 'runningsum' ? 'enrichment score' : scoreMethod === 'meanrank' ? 'rank score' : 'module score (mean z)', zeroline: true },
               legend: { orientation: 'h', y: 1.12, x: 0 }, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },

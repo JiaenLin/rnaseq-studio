@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import { combinedScore } from '../lib/stats'
 import { prepareSets, runORA } from '../lib/ora'
+import { contrastTitle } from '../lib/palette'
 import { reportOra, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
 
@@ -181,7 +182,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
           <div className="card p-4">
             <Plot
               data={[barTrace(bars)]}
-              layout={barLayout(bars.length)}
+              layout={barLayout(bars.length, contrast.label)}
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
               downloadName={`custom_ORA_${contrast.id}`}
             />
@@ -192,7 +193,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
             <div className="card p-4">
               <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                  {selected.name}<span className="ml-2 font-mono text-xs normal-case text-slate-400">{selected.id} · {selected.source}</span>
+                  {selected.name}<span className="ml-2 font-mono text-xs normal-case text-slate-400">{selected.id} · {selected.source} · {contrast.label}</span>
                 </h3>
                 <span className="text-sm text-slate-500">
                   {selected.count}/{selected.setSize} DEGs · fold {selected.foldEnrichment.toFixed(1)}× · padj {fmtP(selected.padj)}
@@ -275,9 +276,10 @@ function barTrace(bars: { id: string; description: string; count: number; padj: 
     },
   }
 }
-function barLayout(n: number) {
+function barLayout(n: number, label: string) {
   return {
-    margin: { t: 8, r: 20, b: 40, l: 300 }, height: Math.max(240, n * 26 + 80),
+    title: contrastTitle(`Over-representation — ${label}`),
+    margin: { t: 34, r: 20, b: 40, l: 300 }, height: Math.max(240, n * 26 + 80),
     xaxis: { title: 'DEG count' }, yaxis: { automargin: true, tickfont: { size: 11 } },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
   }

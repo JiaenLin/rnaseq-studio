@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Bundle, Contrast } from '../types'
-import { SIG_COLORS } from '../lib/palette'
+import { SIG_COLORS, contrastTitle } from '../lib/palette'
 import { reportDe, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
 
@@ -58,10 +58,11 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
   }, [cats, contrast])
 
   const layout = useMemo(() => ({
-    margin: { t: 10, r: 10, b: 45, l: 55 },
+    title: contrastTitle(`Volcano — ${contrast.label}`),
+    margin: { t: 58, r: 10, b: 45, l: 55 },
     xaxis: { title: `log2 fold change  (${contrast.numerator} / ${contrast.denominator})`, zeroline: true },
     yaxis: { title: '−log10 adjusted p-value' },
-    legend: { orientation: 'h', y: 1.08, x: 0 },
+    legend: { orientation: 'h', y: 1.06, x: 0 },
     shapes: [
       { type: 'line', x0: 0, x1: 0, yref: 'paper', y0: 0, y1: 1, line: { color: '#94a3b8', width: 1, dash: 'dot' } },
       { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: -Math.log10(padjThr), y1: -Math.log10(padjThr), line: { color: '#94a3b8', width: 1, dash: 'dot' } },

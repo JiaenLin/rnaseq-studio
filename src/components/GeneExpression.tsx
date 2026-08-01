@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import type { GroupSel } from '../lib/design'
 import { displayOrder, orderSamples } from '../lib/design'
-import { conditionColors, SIG_COLORS } from '../lib/palette'
+import { conditionColors, SIG_COLORS, contrastTitle } from '../lib/palette'
 import { combinedScore, mean, welchP, zscore } from '../lib/stats'
 import Plot from '../lib/Plot'
 
@@ -449,7 +449,8 @@ export default function GeneExpression({
           {listView === 'module' ? (
             <>
               <Plot data={moduleTraces} downloadName={`module_score_${contrast.id}`} layout={{
-                margin: { t: 8, r: 10, b: 36, l: 52 }, showlegend: false,
+                title: contrastTitle(`Module score — ${contrast.label}`),
+                margin: { t: 34, r: 10, b: 36, l: 52 }, showlegend: false,
                 xaxis: { type: 'category', automargin: true, tickangle: moduleTraces.length > 6 ? -45 : 0,
                   tickfont: { size: moduleTraces.length > 12 ? 9 : 11 } },
                 yaxis: { title: 'module score', zeroline: true },
@@ -496,7 +497,8 @@ export default function GeneExpression({
             data={barTrace}
             downloadName={`per_gene_log2FC_${contrast.id}`}
             layout={{
-              margin: { t: 8, r: 10, b: 40, l: 90 }, height: Math.max(200, barGenes.length * 22 + 80),
+              title: contrastTitle(`Per-gene log2FC — ${contrast.label}`),
+              margin: { t: 34, r: 10, b: 40, l: 90 }, height: Math.max(226, barGenes.length * 22 + 106),
               xaxis: { title: 'log2 fold change', zeroline: true },
               yaxis: { automargin: true, tickfont: { size: 11 } },
               paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
@@ -509,7 +511,9 @@ export default function GeneExpression({
         </div>
 
         <div className="card p-4">
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Per-gene DEG table</h3>
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Per-gene DEG table — {contrast.label}
+          </h3>
           <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100 dark:border-slate-800">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">

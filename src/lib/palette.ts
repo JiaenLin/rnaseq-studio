@@ -43,3 +43,16 @@ export const SIG_COLORS = {
   down: '#4393c3',
   ns: '#cbd5e1',
 }
+
+/**
+ * Plotly title block naming the comparison a figure describes.
+ *
+ * Card headings live in the DOM and are lost the moment a chart is exported as
+ * PNG, so any figure whose numbers depend on a contrast carries the label
+ * inside the plot itself.
+ */
+export const contrastTitle = (text: string) => ({
+  text,
+  x: 0, xanchor: 'left' as const, y: 1, yanchor: 'top' as const,
+  font: { size: 12.5 },
+})

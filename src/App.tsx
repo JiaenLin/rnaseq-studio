@@ -20,12 +20,14 @@ const SERVICE_URL = 'https://jiaenlin.github.io/rnaseq-service/'
 const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
 
 type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset' | 'methods'
+// Ordered the way results are read: what the dataset is, then the statistics,
+// then the pathway view, then drilling into genes, then writing it up.
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'expression', label: 'Gene expression' },
-  { id: 'volcano', label: 'Volcano' },
   { id: 'degs', label: 'DEG table' },
+  { id: 'volcano', label: 'Volcano' },
   { id: 'enrichment', label: 'Enrichment' },
+  { id: 'expression', label: 'Gene expression' },
   { id: 'geneset', label: 'Gene sets' },
   { id: 'methods', label: 'Methods' },
 ]
