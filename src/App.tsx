@@ -503,70 +503,66 @@ function Landing({ onOpenZip, onOpenFolder, onDemo, onFormat }: {
         <h2 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
           Explore your RNA-seq results in the browser
         </h2>
-        <p className="mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-slate-500">
-          Search any gene, scan volcano plots, run tunable enrichment, score your own gene sets,
-          and draft your Methods paragraph — from a result bundle your pipeline already produced.
+        <p className="mx-auto mt-3 max-w-xl text-[13.5px] leading-relaxed text-slate-500">
+          Gene search, volcano plots, tunable enrichment, your own gene sets and a drafted Methods
+          paragraph — from a result bundle your pipeline already produced.
         </p>
       </div>
 
       {/* Primary action. The whole card is the drop target the page already listens on. */}
       <div className="card mt-8 border-dashed p-8 text-center">
-        <p className="text-base font-medium">Open your result bundle</p>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="text-[15px] font-semibold">Open your result bundle</p>
+        <p className="mt-1 text-[12.5px] text-slate-500">
           Drop a <b>.zip</b> anywhere on this page, or pick one below.
         </p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <button className="btn btn-primary" onClick={onOpenZip}>⭱ Open bundle (.zip)</button>
           <button className="btn" onClick={onOpenFolder}>Open a folder…</button>
         </div>
-        <p className="mt-4 text-xs text-slate-400">
+        <p className="mt-4 text-[11.5px] text-slate-400">
           Everything runs client-side — your data never leaves this device.
         </p>
       </div>
 
       <div className="mt-8">
-        <p className="text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Don't have a bundle yet?
-        </p>
+        {/* Black and bold. This was the lightest grey on the page, which is the
+            style for a caption above a title — as the only label for a section
+            it read as a caption for nothing. The three "You have" eyebrows are
+            folded in here rather than repeated on every card. */}
+        <h3 className="text-[11.5px] font-bold uppercase tracking-[0.09em] text-slate-900 dark:text-slate-100">
+          Don&rsquo;t have a bundle yet? Start from what you have
+        </h3>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <StartCard
-            step="You have"
             what="A count matrix"
             detail="Genes × samples, from featureCounts, STAR, Salmon, or your core facility."
             app="RNA-seq Lab"
             does="Runs DESeq2 or limma-voom in your browser and returns a bundle."
+            cta="Open RNA-seq Lab ↗"
             href={LAB_URL}
-            accent="indigo"
           />
           <StartCard
-            step="You have"
             what="Only raw FASTQ"
             detail="The folder your sequencer or provider delivered."
             app="RNA-seq Service"
             does="Scans it, names your samples, and builds an analysis request."
+            cta="Open RNA-seq Service ↗"
             href={SERVICE_URL}
-            accent="emerald"
           />
-          <div className="flex flex-col rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">You have</div>
-            <div className="mt-1 text-sm font-semibold">Your own pipeline</div>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">
-              nf-core, snakemake, or a script of your own.
-            </p>
-            <div className="mt-3 inline-flex w-fit rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
-              Bundle format
-            </div>
-            <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-500">
-              Five plain CSV files plus a small JSON manifest — emit those and it opens here.
-            </p>
-            <button className="btn mt-3 justify-center" onClick={onFormat}>See the format</button>
-          </div>
+          <StartCard
+            what="Your own pipeline"
+            detail="nf-core, snakemake, or a script of your own."
+            app="Bundle format"
+            does="Five plain CSV files plus a small JSON manifest — emit those and it opens here."
+            cta="See the format"
+            onClick={onFormat}
+          />
         </div>
       </div>
 
       <div className="mt-8 text-center">
         <button className="btn" onClick={onDemo}>Explore a demo dataset instead →</button>
-        <p className="mt-2 text-xs text-slate-400">
+        <p className="mt-2 text-[11.5px] text-slate-400">
           Simulated data, for trying the interface. It is labelled throughout so it is never
           mistaken for your own.
         </p>
@@ -594,22 +590,20 @@ function GetStartedModal({ onClose, onFormat }: { onClose: () => void; onFormat:
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <StartCard
-            step="Start here if you have"
             what="A gene count matrix"
             detail="A CSV/TSV of genes × samples — e.g. from featureCounts, STAR, Salmon, or your core facility."
             app="RNA-seq Lab"
             does="Runs DESeq2 or limma-voom in your browser and hands you a bundle. Free, nothing uploaded."
+            cta="Open RNA-seq Lab ↗"
             href={LAB_URL}
-            accent="indigo"
           />
           <StartCard
-            step="Start here if you have"
             what="Only raw FASTQ files"
             detail="The folder your sequencer or provider delivered, full of .fastq.gz files."
             app="RNA-seq Service"
             does="Scans the folder, names your samples, and builds an analysis request to send us."
+            cta="Open RNA-seq Service ↗"
             href={SERVICE_URL}
-            accent="emerald"
           />
         </div>
 
@@ -627,26 +621,33 @@ function GetStartedModal({ onClose, onFormat }: { onClose: () => void; onFormat:
   )
 }
 
-function StartCard({ step, what, detail, app, does, href, accent }: {
-  step: string; what: string; detail: string; app: string; does: string; href: string
-  accent: 'indigo' | 'emerald'
+/**
+ * One route out of the dead end, keyed by what the visitor already has.
+ *
+ * These are alternatives, not a ranking, so they are styled identically. They
+ * used to carry a colour each — indigo border and filled button, emerald border
+ * and filled button, grey border and outline button — which read as three
+ * different kinds of thing and implied the grey one was the lesser option. The
+ * only thing that should differ between them is the words.
+ */
+function StartCard({ what, detail, app, does, cta, href, onClick }: {
+  what: string; detail: string; app: string; does: string; cta: string
+  href?: string; onClick?: () => void
 }) {
-  const ring = accent === 'indigo'
-    ? 'border-indigo-200 hover:border-indigo-400 dark:border-indigo-500/30'
-    : 'border-emerald-200 hover:border-emerald-400 dark:border-emerald-500/30'
-  const chip = accent === 'indigo'
-    ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
-    : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
   return (
-    <div className={`flex flex-col rounded-xl border p-4 transition ${ring}`}>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{step}</div>
-      <div className="mt-1 text-sm font-semibold">{what}</div>
-      <p className="mt-1 text-xs leading-relaxed text-slate-500">{detail}</p>
-      <div className={`mt-3 inline-flex w-fit rounded-md px-2 py-0.5 text-xs font-semibold ${chip}`}>{app}</div>
-      <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-500">{does}</p>
-      <a className="btn btn-primary mt-3 justify-center" href={href} target="_blank" rel="noopener noreferrer">
-        Open {app} ↗
-      </a>
+    <div className="flex flex-col rounded-xl border border-slate-200 p-4 transition hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600">
+      <div className="text-[14px] font-semibold">{what}</div>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-slate-500">{detail}</p>
+      <div className="mt-3 inline-flex w-fit rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+        {app}
+      </div>
+      <p className="mt-1.5 flex-1 text-[12.5px] leading-relaxed text-slate-500">{does}</p>
+      {href
+        ? (
+          <a className="btn btn-primary mt-3 justify-center" href={href}
+            target="_blank" rel="noopener noreferrer">{cta}</a>
+        )
+        : <button className="btn btn-primary mt-3 justify-center" onClick={onClick}>{cta}</button>}
     </div>
   )
 }
