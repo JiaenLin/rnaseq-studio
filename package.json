@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node scripts/test-bundle.mjs",
+    "test": "node scripts/test-bundle.mjs && node scripts/test-ora.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

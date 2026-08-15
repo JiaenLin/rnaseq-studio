@@ -1,7 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import { combinedScore } from '../lib/stats'
-import { prepareSets, runORA } from '../lib/ora'
+import { oraIndexed } from '../lib/ora'
+import { defaultSources, useGeneSets, useSetIndex } from '../lib/genesets.ts'
+import type { Collection } from '../lib/msigdb.ts'
+import { detectSpecies, speciesOfMeta, type Species } from '../lib/species.ts'
+import GeneSetSources from './GeneSetSources.tsx'
 import { contrastTitle } from '../lib/palette'
 import { reportOra, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
@@ -12,16 +16,21 @@ interface Props {
   onSelectGene: (gene: string) => void
 }
 
-// Enrichment = live, tunable over-representation analysis (ORA) only.
+/**
+ * Enrichment = live, tunable over-representation analysis (ORA) only.
+ *
+ * The library no longer has to come with the bundle. It used to: a bundle
+ * carried genesets.csv, written by export-bundle.R, which meant five
+ * collections for Homo sapiens filtered to that experiment's background — and
+ * a bundle exported without it could not run ORA at all, which is what this
+ * gate used to say. The studio now ships the whole of MSigDB for both species,
+ * fetched a collection at a time, exactly as scrnaseq-studio does and from
+ * byte-identical files.
+ *
+ * A bundle's own genesets.csv is still read, and is offered as one more
+ * collection beside them rather than as the only one there is.
+ */
 export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
-  if (!bundle.genesets?.length) {
-    return (
-      <div className="card p-10 text-center text-sm text-slate-400">
-        This bundle has no gene-set library (<code>genesets.csv</code>). Re-export the analysis with
-        <code> scripts/export-bundle.R</code> (which fetches gene sets via msigdbr) to enable ORA.
-      </div>
-    )
-  }
   return <CustomORA bundle={bundle} contrast={contrast} onSelectGene={onSelectGene} />
 }
 
@@ -39,25 +48,76 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
 
   const degMap = useMemo(() => buildDegMap(deg), [deg])
   const { rankMap, totalRanked } = useMemo(() => buildRankMap(deg), [deg])
-  const { sets, universe } = useMemo(() => prepareSets(bundle.genesets || []), [bundle.genesets])
-  const allSources = useMemo(() => Array.from(new Set(sets.map(s => s.source))), [sets])
 
-  // Library info — sets & genes per source.
-  const lib = useMemo(() => {
-    const bySource = new Map<string, { sets: number; genes: Set<string> }>()
-    for (const s of sets) {
-      const e = bySource.get(s.source) || { sets: 0, genes: new Set<string>() }
-      e.sets++; for (const g of s.genes) e.genes.add(g)
-      bySource.set(s.source, e)
-    }
-    return Array.from(bySource.entries()).map(([source, v]) => ({ source, sets: v.sets, genes: v.genes.size }))
-  }, [sets])
+  /**
+   * Which species' library to test against.
+   *
+   * The bundle's own meta.species is read first — it is what the lab recorded,
+   * and better evidence than anything inferable from the gene list. Detection
+   * from the gene names is the fallback for a bundle that left it blank, and
+   * the reader can override either.
+   */
+  const detected = useMemo(
+    () => detectSpecies(deg.map(r => r.gene_name || r.gene_id)), [deg])
+  const [speciesPick, setSpeciesPick] = useState<Species | null>(null)
+  const species: Species = speciesPick
+    ?? speciesOfMeta(bundle.meta.species)
+    ?? detected.species
 
-  const background = useMemo(() => {
-    const bg = new Set<string>()
-    for (const r of deg) { const g = (r.gene_name || r.gene_id).toUpperCase(); if (universe.has(g)) bg.add(g) }
-    return bg
-  }, [deg, universe])
+  const [srcs, setSrcs] = useState<string[]>([])
+  const [customSets, setCustomSets] = useState<Collection[]>([])
+
+  /**
+   * The bundle's own genesets.csv, as a collection like any other.
+   *
+   * It used to be the whole library; it is now one source among twenty-three,
+   * which is the right relationship — it is this experiment's export, and
+   * MSigDB is the database. Named for the bundle so it cannot be mistaken for
+   * one of the shipped collections.
+   */
+  const embedded = useMemo<Collection[]>(() => {
+    const defs = bundle.genesets ?? []
+    if (!defs.length) return []
+    const at = new Map<string, number>()
+    const symbols: string[] = []
+    const sets = defs.map(d => ({
+      id: d.id,
+      name: d.name || d.id,
+      genes: Int32Array.from(d.genes.map(g => {
+        let k = at.get(g)
+        if (k === undefined) { k = symbols.length; at.set(g, k); symbols.push(g) }
+        return k
+      })),
+    }))
+    return [{
+      species: 'any', source: 'From this bundle', release: bundle.meta.project || 'this export',
+      symbols, sets,
+    }]
+  }, [bundle.genesets, bundle.meta.project])
+
+  const withEmbedded = useMemo(
+    () => [...customSets, ...embedded], [customSets, embedded])
+  const lib = useGeneSets(species, srcs, withEmbedded)
+
+  // The species' own defaults, once the manifest says what it has — written
+  // only while nothing is chosen, so it cannot fight a reader turning one off.
+  useEffect(() => {
+    if (!lib.manifest || srcs.length) return
+    const d = defaultSources(lib.manifest, species)
+    if (d.length) setSrcs(d)
+  }, [lib.manifest, species, srcs.length])
+
+  /**
+   * The background: every gene this experiment TESTED, annotated.
+   *
+   * Passed whole to indexFor, which intersects it with the union of the enabled
+   * collections — the annotated background this app has always used, and the
+   * one scrnaseq-studio was corrected to use. The intersection has to happen
+   * against the library actually enabled, so it cannot be done here.
+   */
+  const background = useMemo(
+    () => deg.map(r => r.gene_name || r.gene_id), [deg])
+  const index = useSetIndex(lib.collections, background)
 
   const degUpper = useMemo(() => {
     const s = new Set<string>()
@@ -71,24 +131,46 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
     return s
   }, [deg, padjMax, lfcMin, direction])
 
+  /**
+   * oraIndexed, not runORA.
+   *
+   * runORA walks every gene of every set and upper-cases as it goes, which was
+   * free across the five collections a bundle used to carry and is about 1.6
+   * million string operations across MSigDB's 35 361 — on every drag of a
+   * threshold slider. The fold against the background happens once, in
+   * useSetIndex above; what happens here is a walk over the DEG list.
+   */
   const results = useMemo(
-    () => runORA(degUpper, sets, background, { minSize, maxSize, sources: selSources.size ? selSources : undefined }),
-    [degUpper, sets, background, minSize, maxSize, selSources])
+    () => (index
+      ? oraIndexed([...degUpper], index, {
+        minSize, maxSize, sources: selSources.size ? selSources : undefined,
+      })
+      : []),
+    [degUpper, index, minSize, maxSize, selSources])
 
-  const nDegInBg = useMemo(() => { let n = 0; for (const g of degUpper) if (background.has(g)) n++; return n }, [degUpper, background])
+  const nDegInBg = useMemo(() => {
+    if (!index) return 0
+    let n = 0
+    for (const g of degUpper) if (index.idOf.has(g)) n++
+    return n
+  }, [degUpper, index])
   const orderedResults = useMemo(
     () => rankBy === 'count' ? [...results].sort((a, b) => b.count - a.count || a.padj - b.padj) : results,
     [results, rankBy])
   // Feed the exact ORA configuration to the Methods tab.
   const nSig = results.filter(r => r.padj < 0.05).length
+  const nSets = index?.sets.length ?? 0
+  const nBg = index?.N ?? 0
+  const allSources = useMemo(
+    () => lib.collections.map(c => c.source), [lib.collections])
   useReport(
     () => reportOra({
       padjMax, lfcMin, direction, minSize, maxSize,
       sources: selSources.size ? [...selSources] : allSources,
-      nSets: sets.length, nDeg: degUpper.size, nBackground: background.size, nSig,
+      nSets, nDeg: degUpper.size, nBackground: nBg, nSig,
     }),
     [padjMax, lfcMin, direction, minSize, maxSize, [...selSources].sort().join(','),
-      sets.length, degUpper.size, background.size, nSig].join('|'),
+      nSets, degUpper.size, nBg, nSig].join('|'),
   )
 
   const top = orderedResults.slice(0, topN)
@@ -107,12 +189,31 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
   return (
     <div className="space-y-4">
       <div className="card p-4">
-        {/* library info */}
-        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 pb-3 text-xs text-slate-500 dark:border-slate-800">
-          <span className="font-semibold uppercase tracking-wide text-slate-400">Library</span>
-          <span><b>{sets.length.toLocaleString()}</b> sets · <b>{universe.size.toLocaleString()}</b> genes</span>
-          {lib.map(l => <span key={l.source} className="text-slate-400">{l.source}: {l.sets.toLocaleString()} sets / {l.genes.toLocaleString()} genes</span>)}
+        {/* Which collections are in play. They are a parameter of the analysis
+            like the thresholds below them — switching GO:BP off changes what is
+            tested and therefore what Benjamini–Hochberg is applied across — so
+            they sit on the card that runs the test. */}
+        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3 text-xs dark:border-slate-800">
+          <span className="font-semibold uppercase tracking-wide text-slate-400">Species</span>
+          <select
+            className="rounded border border-slate-200 bg-transparent px-1.5 py-0.5 dark:border-slate-700"
+            value={species} aria-label="Gene set species"
+            onChange={e => setSpeciesPick(e.target.value as Species)}
+          >
+            <option value="human">Human</option>
+            <option value="mouse">Mouse</option>
+          </select>
+          <span className="text-slate-400">
+            {speciesOfMeta(bundle.meta.species)
+              ? `this bundle records ${bundle.meta.species}`
+              : `not recorded in the bundle; the gene names look ${detected.species}`}
+          </span>
         </div>
+        <GeneSetSources
+          lib={lib} species={species} sources={srcs} onSources={setSrcs}
+          customSets={customSets} onCustomSets={setCustomSets}
+          index={index} background={background} detected={detected}
+        />
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Ctl label="padj ≤">
@@ -168,7 +269,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
         )}
 
         <p className="mt-3 text-sm text-slate-500">
-          <b>{degUpper.size.toLocaleString()}</b> DEGs at these thresholds ({nDegInBg.toLocaleString()} in the annotated background of {background.size.toLocaleString()}) ·
+          <b>{degUpper.size.toLocaleString()}</b> DEGs at these thresholds ({nDegInBg.toLocaleString()} in the annotated background of {nBg.toLocaleString()}) ·
           <b> {results.length.toLocaleString()}</b> enriched sets (padj &lt; 0.05: {results.filter(r => r.padj < 0.05).length})
         </p>
       </div>
