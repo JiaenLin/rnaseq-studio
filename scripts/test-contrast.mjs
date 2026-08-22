@@ -150,7 +150,7 @@ console.log('\nA RESULT IS CACHED UNDER THE SAMPLES IT WAS COMPUTED FROM')
     comparisonState(b, ['WT'], ['KO'], ['KO_2'], { [k1]: [] }).source, 'computable')
 }
 
-console.log('\nA PIPELINE TABLE THAT CANNOT HONOUR AN EXCLUSION OFFERS A RE-RUN')
+console.log('\nA PIPELINE TABLE THAT CANNOT HONOUR AN EXCLUSION IS WITHHELD')
 {
   const b = mk({
     conditions: ['WT', 'KO'], control: 'WT', reps: 6,
@@ -161,19 +161,39 @@ console.log('\nA PIPELINE TABLE THAT CANNOT HONOUR AN EXCLUSION OFFERS A RE-RUN'
   check('and nothing is stale', clean.staleExclusions, [])
 
   const st = comparisonState(b, ['WT'], ['KO'], ['KO_1'], {})
-  check('it stays the bundle table', st.source, 'bundle')
-  // The defect from the report: the bar said "run DESeq2 here" and the button
-  // was rendered for 'computable' only, so there was nothing to press.
-  check('but names what it still contains', st.staleExclusions, ['KO_1'])
-  check('and says a re-run is possible', st.canRun, true)
+  // The pipeline's table is WITHHELD, not annotated. It was computed over
+  // samples the reader has taken out, so it does not describe this selection —
+  // and a warning printed beside a DEG table does not travel with a screenshot
+  // of it.
+  check('the table is not used', st.source, 'computable')
+  check('and no contrast is handed to the tabs', st.contrast, null)
+  // Carried, so the bar can name what it is declining to show rather than
+  // leaving the tabs mysteriously empty.
+  check('the withheld table is named', st.hiddenPrecomputed?.id, 'KO_vs_WT')
+  check('with the samples that caused it', st.staleExclusions, ['KO_1'])
+  check('and a re-run is possible', st.canRun, true)
 
-  // No raw counts: the offer has to be withdrawn rather than made and refused.
+  // Bring the sample back and the pipeline's result returns untouched.
+  check('clearing the exclusion restores it',
+    comparisonState(b, ['WT'], ['KO'], [], {}).source, 'bundle')
+  // An exclusion outside the pair does not withhold anything.
+  const b3 = mk({
+    conditions: ['WT', 'KO', 'Other'], control: 'WT', reps: 6,
+    contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT', kind: 'pairwise' }],
+  })
+  check('an unrelated exclusion leaves it alone',
+    comparisonState(b3, ['WT'], ['KO'], ['Other_1'], {}).source, 'bundle')
+
+  // No raw counts: the table is still withheld — it is still wrong for this
+  // selection — but the re-run cannot be offered, so the way back is stated.
   const b2 = mk({
     conditions: ['WT', 'KO'], control: 'WT', reps: 6, raw: false,
     contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT', kind: 'pairwise' }],
   })
-  check('without raw counts there is no re-run',
-    comparisonState(b2, ['WT'], ['KO'], ['KO_1'], {}).canRun, false)
+  const noRaw = comparisonState(b2, ['WT'], ['KO'], ['KO_1'], {})
+  check('without raw counts it is still withheld', noRaw.source, 'unavailable')
+  check('and there is no re-run', noRaw.canRun, false)
+  check('but the way back is named', noRaw.blocked.includes('Bring them back'), true)
 }
 
 console.log('\nEXCLUSIONS REACH THE REPLICATE COUNTS')

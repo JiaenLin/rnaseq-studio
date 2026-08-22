@@ -76,11 +76,10 @@ export default function ComparisonBar({
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <Provenance state={state} />
-          {(state.source === 'computable'
-            || (state.source === 'bundle' && state.canRun && (state.staleExclusions?.length ?? 0) > 0)) && (
+          {state.source === 'computable' && (
             <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
               {running ? 'Running DESeq2…'
-                : state.source === 'bundle'
+                : state.hiddenPrecomputed
                   ? 'Re-run without the excluded samples'
                   : 'Run DESeq2 for this pair'}
             </button>
@@ -112,17 +111,21 @@ export default function ComparisonBar({
           the pipeline was given. It cannot honour an exclusion made here, and
           not saying so would let a reader believe an exclusion had an effect it
           did not have. */}
-      {/* Only when the exclusion actually touches THIS comparison. Excluding a
-          Ctrl_Cold sample changes nothing about KO_Thermo vs KO_Cold, and
-          warning about it there would be noise. */}
-      {state.source === 'bundle' && (state.staleExclusions?.length ?? 0) > 0 && (
-        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-          These statistics came from your pipeline and were computed over <b>all</b> samples —{' '}
-          {state.staleExclusions!.join(', ')}{' '}
-          {state.staleExclusions!.length === 1 ? 'is' : 'are'} still in them.
+      {/* The pipeline's table for this pair exists and is being withheld,
+          because it was computed over samples the reader has taken out. Said
+          here, in full, so the empty tabs are explained rather than puzzling —
+          and only when the exclusion actually touches THIS comparison, since
+          an excluded Ctrl_Cold sample changes nothing about KO_Thermo vs
+          KO_Cold. */}
+      {state.hiddenPrecomputed && (
+        <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300">
+          <b>Your pipeline&rsquo;s result for this pair is hidden.</b> It was computed over all
+          samples, including {state.staleExclusions!.join(', ')} — so it does not describe what you
+          have selected, and showing it beside a warning is how a screenshot ends up in a slide
+          without one.
           {state.canRun
-            ? ' Use the button above to re-run DESeq2 here without them.'
-            : ' This bundle has no raw_counts.csv, so the comparison cannot be re-run here.'}
+            ? ' Re-run it here without them, or bring them back on the Overview tab.'
+            : ' Bring them back on the Overview tab to see it again.'}
         </p>
       )}
 

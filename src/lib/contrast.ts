@@ -137,15 +137,20 @@ export interface ComparisonState {
   /** Why it cannot be run, when `source` is 'unavailable'. */
   blocked?: string
   /**
-   * Excluded samples this precomputed table still contains.
+   * Excluded samples that a precomputed table for this pair would still contain.
    *
-   * Non-empty only when `source` is 'bundle'. The bar used to state this and
-   * then offer nothing to do about it — the run button was rendered for
-   * 'computable' alone, so "Run DESeq2 here if you need the comparison without
-   * them" pointed at a button that was not on the page.
+   * When non-empty, that table is NOT used — see `hiddenPrecomputed`.
    */
   staleExclusions?: string[]
-  /** Whether a run here is possible, for a comparison that already has a table. */
+  /**
+   * The pipeline's table for this pair, withheld because it does not describe
+   * the current selection.
+   *
+   * Carried so the bar can name what it is declining to show. Nothing reads it
+   * as a result.
+   */
+  hiddenPrecomputed?: Contrast | null
+  /** Whether a run here is possible. */
   canRun?: boolean
 }
 
@@ -172,13 +177,37 @@ export function comparisonState(
     return { ...base, source: 'computed', contrast: null }
   }
   const pre = matchPrecomputed(bundle, control, test)
-  // A precomputed table was computed on every sample the pipeline was given, so
-  // it cannot honour an exclusion made here. It is still the right thing to show
-  // — it is a real result — and `staleExclusions` is what lets the bar offer a
-  // re-run rather than only telling the reader one is needed.
+  if (pre && !gone.length) return { ...base, source: 'bundle', contrast: pre, staleExclusions: [] }
+
+  /**
+   * A precomputed table exists, and does not describe this selection.
+   *
+   * It was shown anyway, with a warning beside it. That was the wrong call: a
+   * DEG table, a volcano and an enrichment run are read, exported and pasted
+   * into slides long after the sentence above them has been forgotten, and the
+   * numbers in them are computed over samples the reader has explicitly taken
+   * out. A warning does not travel with a screenshot.
+   *
+   * So the pipeline's result is WITHHELD for this selection rather than
+   * annotated. It is not lost — clear the exclusion, or re-run here, and it
+   * comes straight back. `hiddenPrecomputed` is carried so the bar can say
+   * which table it is declining to show and why, instead of the tabs simply
+   * looking empty.
+   */
   if (pre) {
-    return { ...base, source: 'bundle', contrast: pre,
-      staleExclusions: gone, canRun: !!bundle.rawCounts && nControl >= MIN_REPLICATES && nTest >= MIN_REPLICATES }
+    const runnable = !!bundle.rawCounts && nControl >= MIN_REPLICATES && nTest >= MIN_REPLICATES
+    return {
+      ...base,
+      source: runnable ? 'computable' : 'unavailable',
+      contrast: null,
+      hiddenPrecomputed: pre,
+      staleExclusions: gone,
+      canRun: runnable,
+      blocked: runnable ? undefined
+        : !bundle.rawCounts
+          ? 'This bundle has no raw_counts.csv, so the comparison cannot be re-run without the excluded samples. Bring them back to see your pipeline\u2019s result.'
+          : `Too few samples remain after the exclusions — ${nTest} and ${nControl}, and DESeq2 needs at least ${MIN_REPLICATES} on each side.`,
+    }
   }
 
   if (!control.length || !test.length) {

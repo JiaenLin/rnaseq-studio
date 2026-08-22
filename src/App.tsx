@@ -374,7 +374,7 @@ export default function App() {
             {tab !== 'overview' && tab !== 'expression' && pending && (
               <NeedsStats
                 contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}
-                runLog={myRun.log} onRun={runPair} />
+                runLog={myRun.log} withheld={state?.staleExclusions ?? []} onRun={runPair} />
             )}
             {!pending && (
               <>
@@ -417,17 +417,32 @@ export default function App() {
  * Deliberately blank of numbers: the alternative is displaying a different
  * comparison's volcano under this pair's name.
  */
-function NeedsStats({ contrast, canCompute, running, runLog, onRun }: {
-  contrast: Contrast; canCompute: boolean; running: boolean; runLog: string; onRun: () => void
+function NeedsStats({ contrast, canCompute, running, runLog, withheld, onRun }: {
+  contrast: Contrast; canCompute: boolean; running: boolean; runLog: string
+  /** Samples an existing pipeline table contains that the reader excluded. */
+  withheld: string[]
+  onRun: () => void
 }) {
   return (
     <div className="card mx-auto mt-6 max-w-xl p-8 text-center">
-      <h3 className="text-base font-semibold">No DESeq2 result for this comparison yet</h3>
+      <h3 className="text-base font-semibold">
+        {withheld.length ? 'These statistics do not describe your selection' : 'No DESeq2 result for this comparison yet'}
+      </h3>
       <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
-        <b>{contrast.label}</b> was not exported by your pipeline
-        {canCompute
-          ? ', so nothing is shown here until it has been tested. Running it takes a few seconds after R loads.'
-          : ', and this bundle has no raw counts to test it with.'}
+        {withheld.length ? (
+          // Saying "not exported by your pipeline" here would be false: it WAS
+          // exported, and is being withheld for a different reason.
+          <>Your pipeline exported <b>{contrast.label}</b>, but it was computed with{' '}
+            {withheld.join(', ')} included — the sample{withheld.length === 1 ? '' : 's'} you
+            excluded. {canCompute
+              ? 'Run it here to get the comparison without them.'
+              : 'This bundle has no raw counts to re-test it with, so bring them back on the Overview tab.'}</>
+        ) : (
+          <><b>{contrast.label}</b> was not exported by your pipeline
+            {canCompute
+              ? ', so nothing is shown here until it has been tested. Running it takes a few seconds after R loads.'
+              : ', and this bundle has no raw counts to test it with.'}</>
+        )}
       </p>
       {canCompute ? (
         <>
