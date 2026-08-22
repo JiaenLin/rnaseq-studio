@@ -5,6 +5,7 @@ import { defaultSelection } from './lib/design'
 import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
+import { embeddedCollection, useLibrary } from './lib/genesets'
 import Overview from './components/Overview'
 import GeneExpression from './components/GeneExpression'
 import GeneSetExplorer from './components/GeneSetExplorer'
@@ -161,6 +162,26 @@ export default function App() {
     }
   }, [bundle, sel.control, focus, computed])
 
+  /* The gene-set library, owned here rather than by a tab.
+   *
+   * Enrichment used to own all of it — species, enabled collections, the
+   * reader's own pasted sets — so Gene sets, the one tab whose whole subject is
+   * gene sets, could not reach MSigDB at all. Held beside `geneText` above, for
+   * the same reason: switching tabs must not discard what somebody chose. */
+  const libGenes = useMemo(() => {
+    const rows = active?.bundle.degByContrast[active.contrast.id]
+    // Before a pair has statistics there is no tested-gene list, so the
+    // measured genes stand in — enough for species detection, and the tabs that
+    // need a real background are not shown until the statistics exist.
+    if (rows?.length) return rows.map(r => r.gene_name || r.gene_id)
+    const c = bundle?.counts
+    return c ? c.geneIds.map((id, i) => c.geneNames[i] || id) : []
+  }, [active, bundle])
+  const embedded = useMemo(
+    () => embeddedCollection(bundle?.genesets, bundle?.meta.project ?? ''),
+    [bundle?.genesets, bundle?.meta.project])
+  const library = useLibrary(libGenes, bundle?.meta.species, embedded)
+
   /** DESeq2 for the current pair, on explicit request — it is a real analysis. */
   const runPair = async () => {
     if (!bundle?.rawCounts || !focus || !sel.control) return
@@ -299,9 +320,11 @@ export default function App() {
                 {tab === 'degs' &&
                   <DEGTable bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
                 {tab === 'enrichment' &&
-                  <Enrichment bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
+                  <Enrichment bundle={viewBundle!} contrast={contrast} library={library}
+                    onSelectGene={pickGene} />}
                 {tab === 'geneset' &&
-                  <GeneSetExplorer bundle={viewBundle!} contrast={contrast} sel={sel} onSelectGene={pickGene} />}
+                  <GeneSetExplorer bundle={viewBundle!} contrast={contrast} sel={sel}
+                    library={library} onSelectGene={pickGene} />}
                 {tab === 'methods' && <Methods bundle={viewBundle!} contrast={contrast} />}
               </>
             )}

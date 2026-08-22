@@ -6,7 +6,7 @@
 // has to agree with the reference exactly.
 
 import { bh, bhNlp, hyperTail, logHyperTail, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
-import { indexFor, parseGmt } from '../src/lib/msigdb.ts'
+import { indexFor, parseSets } from '../src/lib/msigdb.ts'
 import { speciesOfMeta } from '../src/lib/species.ts'
 
 let failed = 0
@@ -67,8 +67,12 @@ console.log('\nTHE INDEXED PATH EQUALS THE REFERENCE')
   const bg = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'G9', 'G10', 'G11', 'G12', 'ZZ1', 'ZZ2']
   const query = ['G1', 'G2', 'G4', 'G8', 'G11']
 
-  const gmt = defs.map(d => [d.id, d.source, ...d.genes].join('\t')).join('\n')
-  const index = indexFor([parseGmt(gmt, 'A')], bg)
+  // A real GMT: name, a description column, then the members. The empty second
+  // field is what marks it as a description rather than the first gene — see
+  // looksLikeDescription in msigdb.ts, which is what lets the same parser read
+  // a spreadsheet paste that has no description column at all.
+  const gmt = defs.map(d => [d.id, '', ...d.genes].join('\t')).join('\n')
+  const index = indexFor([parseSets(gmt, 'A')], bg)
 
   const { sets, universe } = prepareSets(defs)
   const bgSet = new Set()

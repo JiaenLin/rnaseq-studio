@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import { combinedScore } from '../lib/stats'
-import { oraIndexed } from '../lib/ora'
-import { defaultSources, useGeneSets, useSetIndex } from '../lib/genesets.ts'
-import type { Collection } from '../lib/msigdb.ts'
-import { detectSpecies, speciesOfMeta, type Species } from '../lib/species.ts'
-import GeneSetSources from './GeneSetSources.tsx'
+import { oraColorDomain, oraIndexed, type ORAResult } from '../lib/ora'
+import { useSetIndex, type LibraryControl } from '../lib/genesets.ts'
+import { LibraryPicker } from './GeneSetSources.tsx'
 import { contrastTitle } from '../lib/palette'
 import { reportOra, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
@@ -13,8 +11,31 @@ import Plot from '../lib/Plot'
 interface Props {
   bundle: Bundle
   contrast: Contrast
+  /** The app's one gene-set library — see useLibrary in lib/genesets.ts. */
+  library: LibraryControl
   onSelectGene: (gene: string) => void
 }
+
+/**
+ * What a bar's length means.
+ *
+ * clusterProfiler draws Count on its barplot and GeneRatio on its dotplot, and
+ * the difference matters: a raw count rewards big sets, so "Ribosome" at 63/84
+ * outdraws a 5-gene pathway matched 5/5 even though the second is the stronger
+ * statement about this DEG list. Gene ratio is the default here for that
+ * reason. This card drew count and only count, which on the full MSigDB library
+ * put GO:BP's largest terms at the top of every figure.
+ */
+type BarMetric = 'ratio' | 'count' | 'fold'
+
+/**
+ * Below this many sets, a collection is somebody's own rather than a database.
+ *
+ * Only used to pick the default size floor. MSigDB's smallest shipped
+ * collection is 19 sets and its next is 50, so this does not separate them from
+ * each other — it separates a pasted handful from all of them.
+ */
+const SMALL_LIBRARY = 200
 
 /**
  * Enrichment = live, tunable over-representation analysis (ORA) only.
@@ -22,98 +43,61 @@ interface Props {
  * The library no longer has to come with the bundle. It used to: a bundle
  * carried genesets.csv, written by export-bundle.R, which meant five
  * collections for Homo sapiens filtered to that experiment's background — and
- * a bundle exported without it could not run ORA at all, which is what this
- * gate used to say. The studio now ships the whole of MSigDB for both species,
- * fetched a collection at a time, exactly as scrnaseq-studio does and from
- * byte-identical files.
+ * a bundle exported without it could not run ORA at all. The studio now ships
+ * the whole of MSigDB for both species, fetched a collection at a time, plus
+ * the assembled Metabolic library.
  *
  * A bundle's own genesets.csv is still read, and is offered as one more
  * collection beside them rather than as the only one there is.
  */
-export default function Enrichment({ bundle, contrast, onSelectGene }: Props) {
-  return <CustomORA bundle={bundle} contrast={contrast} onSelectGene={onSelectGene} />
+export default function Enrichment(props: Props) {
+  return <CustomORA {...props} />
 }
 
-function CustomORA({ bundle, contrast, onSelectGene }: Props) {
+function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
   const deg = bundle.degByContrast[contrast.id] || []
   const [padjMax, setPadjMax] = useState(0.05)
   const [lfcMin, setLfcMin] = useState(1)
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
-  const [minSize, setMinSize] = useState(10)
-  const [maxSize, setMaxSize] = useState(500)
-  const [selSources, setSelSources] = useState<Set<string>>(new Set())
   const [termId, setTermId] = useState<string>('')
   const [rankBy, setRankBy] = useState<'padj' | 'count'>('padj')
+  const [metric, setMetric] = useState<BarMetric>('ratio')
   const [topN, setTopN] = useState(15)
 
   const degMap = useMemo(() => buildDegMap(deg), [deg])
   const { rankMap, totalRanked } = useMemo(() => buildRankMap(deg), [deg])
 
-  /**
-   * Which species' library to test against.
-   *
-   * The bundle's own meta.species is read first — it is what the lab recorded,
-   * and better evidence than anything inferable from the gene list. Detection
-   * from the gene names is the fallback for a bundle that left it blank, and
-   * the reader can override either.
-   */
-  const detected = useMemo(
-    () => detectSpecies(deg.map(r => r.gene_name || r.gene_id)), [deg])
-  const [speciesPick, setSpeciesPick] = useState<Species | null>(null)
-  const species: Species = speciesPick
-    ?? speciesOfMeta(bundle.meta.species)
-    ?? detected.species
-
-  const [srcs, setSrcs] = useState<string[]>([])
-  const [customSets, setCustomSets] = useState<Collection[]>([])
+  const { lib } = library
 
   /**
-   * The bundle's own genesets.csv, as a collection like any other.
+   * The size window, and whether the reader has set it themselves.
    *
-   * It used to be the whole library; it is now one source among twenty-three,
-   * which is the right relationship — it is this experiment's export, and
-   * MSigDB is the database. Named for the bundle so it cannot be mistaken for
-   * one of the shipped collections.
+   * 10 is clusterProfiler's `minGSSize` and the right floor for MSigDB, where
+   * the KEGG MEDICUS modules are small by design and mostly noise. It is the
+   * wrong floor for a collection somebody pasted in: a hand-curated pathway is
+   * routinely seven to fifteen genes, and the window is applied to K — the
+   * members this CONTRAST tested — so a twelve-gene set with nine tested is
+   * silently below it. Somebody who adds seven sets and finds one already gone
+   * has been failed by a default chosen for a different library.
+   *
+   * So the floor is derived from the library until the reader touches the
+   * field, after which it is theirs and nothing moves it.
    */
-  const embedded = useMemo<Collection[]>(() => {
-    const defs = bundle.genesets ?? []
-    if (!defs.length) return []
-    const at = new Map<string, number>()
-    const symbols: string[] = []
-    const sets = defs.map(d => ({
-      id: d.id,
-      name: d.name || d.id,
-      genes: Int32Array.from(d.genes.map(g => {
-        let k = at.get(g)
-        if (k === undefined) { k = symbols.length; at.set(g, k); symbols.push(g) }
-        return k
-      })),
-    }))
-    return [{
-      species: 'any', source: 'From this bundle', release: bundle.meta.project || 'this export',
-      symbols, sets,
-    }]
-  }, [bundle.genesets, bundle.meta.project])
-
-  const withEmbedded = useMemo(
-    () => [...customSets, ...embedded], [customSets, embedded])
-  const lib = useGeneSets(species, srcs, withEmbedded)
-
-  // The species' own defaults, once the manifest says what it has — written
-  // only while nothing is chosen, so it cannot fight a reader turning one off.
-  useEffect(() => {
-    if (!lib.manifest || srcs.length) return
-    const d = defaultSources(lib.manifest, species)
-    if (d.length) setSrcs(d)
-  }, [lib.manifest, species, srcs.length])
+  const [size, setSize] = useState<{ min: number; max: number } | null>(null)
+  const smallLibrary = lib.collections.length > 0
+    && lib.collections.every(c => c.sets.length < SMALL_LIBRARY)
+  const minSize = size?.min ?? (smallLibrary ? 3 : 10)
+  const maxSize = size?.max ?? 500
+  const setMinSize = (v: number) => setSize({ min: v, max: maxSize })
+  const setMaxSize = (v: number) => setSize({ min: minSize, max: v })
 
   /**
    * The background: every gene this experiment TESTED, annotated.
    *
    * Passed whole to indexFor, which intersects it with the union of the enabled
-   * collections — the annotated background this app has always used, and the
-   * one scrnaseq-studio was corrected to use. The intersection has to happen
-   * against the library actually enabled, so it cannot be done here.
+   * collections — the annotated background this app has always used. The
+   * intersection has to happen against the library actually enabled, so it
+   * cannot be done here.
    */
   const background = useMemo(
     () => deg.map(r => r.gene_name || r.gene_id), [deg])
@@ -139,24 +123,52 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
    * million string operations across MSigDB's 35 361 — on every drag of a
    * threshold slider. The fold against the background happens once, in
    * useSetIndex above; what happens here is a walk over the DEG list.
+   *
+   * No `sources` post-filter. There used to be a second row of source chips
+   * under the sliders that narrowed what was REPORTED, beside the collection
+   * chips that decide what is DOWNLOADED, TESTED and CORRECTED ACROSS. Two rows
+   * that looked identical and meant different things: switching Reactome off in
+   * one changed every p-value on the page, switching it off in the other
+   * changed none of them. One control, and it is the one that moves N.
    */
   const results = useMemo(
-    () => (index
-      ? oraIndexed([...degUpper], index, {
-        minSize, maxSize, sources: selSources.size ? selSources : undefined,
-      })
-      : []),
-    [degUpper, index, minSize, maxSize, selSources])
+    () => (index ? oraIndexed([...degUpper], index, { minSize, maxSize }) : []),
+    [degUpper, index, minSize, maxSize])
 
+  /**
+   * The query size the TEST used: DEGs that are in the annotated background,
+   * which is exactly the n `oraIndexed` divides by.
+   *
+   * The gene ratio has to use the same n as the test that produced the p-value
+   * beside it — clusterProfiler's GeneRatio does — or a DEG list that is half
+   * unannotated reports a ratio half of what was actually computed.
+   */
   const nDegInBg = useMemo(() => {
     if (!index) return 0
     let n = 0
     for (const g of degUpper) if (index.idOf.has(g)) n++
     return n
   }, [degUpper, index])
+
+  /**
+   * How many sets the size window actually left to test.
+   *
+   * Without this the card could only count DEGs, and a reader who saw two bars
+   * had no way to learn where the rest went. The default 10–500 window drops
+   * 255 of KEGG's 844 sets on its own, because the MEDICUS modules are small by
+   * design — that is a fact about the analysis and it belongs on screen.
+   */
+  const inRange = useMemo(() => {
+    if (!index) return { n: 0, of: 0 }
+    let n = 0
+    for (const s of index.sets) if (s.K >= minSize && s.K <= maxSize) n++
+    return { n, of: index.sets.length }
+  }, [index, minSize, maxSize])
+
   const orderedResults = useMemo(
     () => rankBy === 'count' ? [...results].sort((a, b) => b.count - a.count || a.padj - b.padj) : results,
     [results, rankBy])
+
   // Feed the exact ORA configuration to the Methods tab.
   const nSig = results.filter(r => r.padj < 0.05).length
   const nSets = index?.sets.length ?? 0
@@ -165,26 +177,45 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
     () => lib.collections.map(c => c.source), [lib.collections])
   useReport(
     () => reportOra({
-      padjMax, lfcMin, direction, minSize, maxSize,
-      sources: selSources.size ? [...selSources] : allSources,
+      padjMax, lfcMin, direction, minSize, maxSize, sources: allSources,
       nSets, nDeg: degUpper.size, nBackground: nBg, nSig,
     }),
-    [padjMax, lfcMin, direction, minSize, maxSize, [...selSources].sort().join(','),
+    [padjMax, lfcMin, direction, minSize, maxSize, allSources.join(','),
       nSets, degUpper.size, nBg, nSig].join('|'),
   )
 
   const top = orderedResults.slice(0, topN)
-  const bars = [...top].reverse().map(r => ({ id: r.id, description: r.name, count: r.count, padj: r.padj }))
+  const bars = [...top].reverse()
   const selected = orderedResults.find(r => r.id === termId) || top[0]
-
-  const toggleSource = (s: string) => setSelSources(prev => {
-    const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n
-  })
 
   const memberRows = (selected?.overlap || []).map(g => {
     const d = degMap.get(g)
     return { g, d, comb: d ? combinedScore(d.log2FoldChange, d.pvalue) : null, rank: rankMap.get(g) }
   }).sort((a, b) => (b.comb ?? -Infinity) - (a.comb ?? -Infinity))
+
+  // Every set, every column, every overlapping gene — the figure shows fifteen.
+  const downloadCsv = () => {
+    const header = ['set', 'id', 'source', 'overlap', 'setSize', 'geneRatio',
+      'foldEnrichment', 'pvalue', 'padj', 'genes']
+    const esc = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+    const lines = [header.join(',')]
+    for (const r of orderedResults) {
+      lines.push([
+        esc(r.name), r.id, esc(r.source), String(r.count), String(r.setSize),
+        (nDegInBg ? r.count / nDegInBg : 0).toFixed(5),
+        r.foldEnrichment.toFixed(4),
+        r.pvalue === 0 ? `1e-${r.nlp.toFixed(1)}` : r.pvalue.toExponential(4),
+        r.padj === 0 ? `1e-${r.nlpAdj.toFixed(1)}` : r.padj.toExponential(4),
+        esc(r.overlap.join(' ')),
+      ].join(','))
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `enrichment_${contrast.id}_${direction}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
 
   return (
     <div className="space-y-4">
@@ -193,27 +224,8 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
             like the thresholds below them — switching GO:BP off changes what is
             tested and therefore what Benjamini–Hochberg is applied across — so
             they sit on the card that runs the test. */}
-        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3 text-xs dark:border-slate-800">
-          <span className="font-semibold uppercase tracking-wide text-slate-400">Species</span>
-          <select
-            className="rounded border border-slate-200 bg-transparent px-1.5 py-0.5 dark:border-slate-700"
-            value={species} aria-label="Gene set species"
-            onChange={e => setSpeciesPick(e.target.value as Species)}
-          >
-            <option value="human">Human</option>
-            <option value="mouse">Mouse</option>
-          </select>
-          <span className="text-slate-400">
-            {speciesOfMeta(bundle.meta.species)
-              ? `this bundle records ${bundle.meta.species}`
-              : `not recorded in the bundle; the gene names look ${detected.species}`}
-          </span>
-        </div>
-        <GeneSetSources
-          lib={lib} species={species} sources={srcs} onSources={setSrcs}
-          customSets={customSets} onCustomSets={setCustomSets}
-          index={index} background={background} detected={detected}
-        />
+        <LibraryPicker library={library} index={index} background={background}
+          recorded={bundle.meta.species} />
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Ctl label="padj ≤">
@@ -239,56 +251,96 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
           </Ctl>
           <Ctl label="set size">
             <div className="flex items-center gap-1">
-              <input type="number" className="input w-16 py-1" value={minSize} min={1} onChange={e => setMinSize(+e.target.value || 1)} />
+              <input type="number" className="input w-16 py-1" value={minSize} min={1}
+                aria-label="Minimum set size"
+                onChange={e => setMinSize(Math.max(1, +e.target.value || 1))} />
               <span className="text-slate-400">–</span>
-              <input type="number" className="input w-20 py-1" value={maxSize} min={1} onChange={e => setMaxSize(+e.target.value || 1)} />
+              <input type="number" className="input w-20 py-1" value={maxSize} min={1}
+                aria-label="Maximum set size"
+                onChange={e => setMaxSize(Math.max(1, +e.target.value || 1))} />
             </div>
           </Ctl>
-          <Ctl label="rank by">
-            <select className="input w-full py-1" value={rankBy} onChange={e => setRankBy(e.target.value as any)}>
-              <option value="padj">adjusted p-value</option>
-              <option value="count">gene count</option>
+          <Ctl label="bar shows">
+            <select className="input w-full py-1" value={metric} aria-label="What the bar length shows"
+              onChange={e => setMetric(e.target.value as BarMetric)}>
+              <option value="ratio">gene ratio (k/n)</option>
+              <option value="count">DEG count (k)</option>
+              <option value="fold">fold enrichment</option>
             </select>
           </Ctl>
-          <Ctl label="terms shown">
-            <input type="number" className="input w-20 py-1" value={topN} min={1} max={100}
-              onChange={e => setTopN(clamp(Math.round(+e.target.value), 1, 100))} />
+          <Ctl label="rank by / show">
+            <div className="flex items-center gap-1">
+              <select className="input w-full py-1" value={rankBy} aria-label="Rank terms by"
+                onChange={e => setRankBy(e.target.value as any)}>
+                <option value="padj">adj. p</option>
+                <option value="count">count</option>
+              </select>
+              <input type="number" className="input w-16 py-1" value={topN} min={1} max={100}
+                aria-label="Terms shown"
+                onChange={e => setTopN(clamp(Math.round(+e.target.value), 1, 100))} />
+            </div>
           </Ctl>
         </div>
 
-        {allSources.length > 1 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs uppercase tracking-wide text-slate-400">sources:</span>
-            {allSources.map(s => (
-              <button key={s} onClick={() => toggleSource(s)}
-                className={`pill pressable border ${selSources.size === 0 || selSources.has(s) ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : 'border-slate-200 text-slate-400 dark:border-slate-700'}`}>
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-
         <p className="mt-3 text-sm text-slate-500">
           <b>{degUpper.size.toLocaleString()}</b> DEGs at these thresholds ({nDegInBg.toLocaleString()} in the annotated background of {nBg.toLocaleString()}) ·
-          <b> {results.length.toLocaleString()}</b> enriched sets (padj &lt; 0.05: {results.filter(r => r.padj < 0.05).length})
+          <b> {results.length.toLocaleString()}</b> enriched sets (padj &lt; 0.05: {nSig.toLocaleString()})
         </p>
       </div>
 
       {results.length === 0 ? (
+        /* The empty state names WHICH filter emptied it. "No sets pass — loosen
+           the thresholds" was one sentence for five different situations, and
+           four of them were not about the thresholds at all. */
         <div className="card p-10 text-center text-sm text-slate-400">
-          No sets pass with the current thresholds — loosen padj / log2FC, or widen the set-size range.
+          {degUpper.size === 0
+            ? `No gene passes padj ≤ ${padjMax} and |log2FC| ≥ ${lfcMin}, so there is nothing to
+               test. Loosen the cutoffs above.`
+            : inRange.of === 0
+              ? 'No collection is loaded, so there was nothing to test against. Switch one on under Collections above.'
+              : inRange.n === 0
+                ? `${degUpper.size.toLocaleString()} DEGs, but none of the ${inRange.of.toLocaleString()} sets
+                   fall between ${minSize} and ${maxSize} genes — so nothing was tested. Widen the
+                   set-size window above.`
+                : nDegInBg === 0
+                  ? `None of the ${degUpper.size.toLocaleString()} DEGs is in any of the
+                     ${inRange.n.toLocaleString()} sets tested, so there is nothing to be enriched.
+                     On a collection of your own that usually means the species or the
+                     capitalisation differs from this bundle — the set editor lists which genes
+                     it could not find.`
+                  : `${degUpper.size.toLocaleString()} DEGs against ${inRange.n.toLocaleString()} sets,
+                     and no set overlaps them. Loosen padj / log2FC, or widen the set-size range.`}
         </div>
       ) : (
         <>
           <div className="card p-4">
+            <div className="mb-1 flex justify-end">
+              <button className="btn py-1 text-xs" onClick={downloadCsv}>⭳ Download CSV</button>
+            </div>
             <Plot
-              data={[barTrace(bars)]}
-              layout={barLayout(bars.length, contrast.label)}
+              data={[barTrace(bars, metric, nDegInBg)]}
+              layout={barLayout(bars.length, contrast.label, metric)}
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
-              downloadName={`custom_ORA_${contrast.id}`}
+              downloadName={`ORA_${contrast.id}_${direction}`}
             />
-            <p className="mt-1 text-center text-xs text-slate-400">Live over-representation (hypergeometric + BH). Bar = DEG count, colour = −log10 p.adjust. Click a bar to list its DEGs.</p>
+            <p className="mt-1 text-center text-xs text-slate-400">
+              Live over-representation (hypergeometric + BH). Colour = −log10 p.adjust; the scale
+              always reaches past padj 0.05, so a page where nothing is significant looks like one.
+              Click a bar to list its DEGs.
+            </p>
           </div>
+
+          {/* The whole funnel, not just the last step of it. A reader who has
+              added seven sets and sees two bars needs to know that one fell
+              below the size floor and four contain no DEG from this list —
+              which ORA drops silently, because a set with no overlap has
+              nothing to report. */}
+          <p className="px-1 font-mono text-xs text-slate-400">
+            {inRange.of.toLocaleString()} sets contain a tested gene · {inRange.n.toLocaleString()} within{' '}
+            {minSize}–{maxSize} genes · {results.length.toLocaleString()} contain one of the{' '}
+            {nDegInBg.toLocaleString()} annotated DEGs · showing {top.length}. Gene ratio = k/n,
+            fold = (k/n) ÷ (K/N). The CSV has every set.
+          </p>
 
           {selected && (
             <div className="card p-4">
@@ -297,7 +349,7 @@ function CustomORA({ bundle, contrast, onSelectGene }: Props) {
                   {selected.name}<span className="ml-2 font-mono text-xs normal-case text-slate-400">{selected.id} · {selected.source} · {contrast.label}</span>
                 </h3>
                 <span className="text-sm text-slate-500">
-                  {selected.count}/{selected.setSize} DEGs · fold {selected.foldEnrichment.toFixed(1)}× · padj {fmtP(selected.padj)}
+                  {selected.count}/{selected.setSize} DEGs · ratio {(nDegInBg ? selected.count / nDegInBg : 0).toFixed(3)} · fold {selected.foldEnrichment.toFixed(1)}× · padj {fmtP(selected.padj, selected.nlpAdj)}
                 </span>
               </div>
               <GeneStatTable rows={memberRows} contrast={contrast} totalRanked={totalRanked} onSelectGene={onSelectGene} />
@@ -359,29 +411,61 @@ function Ctl({ label, children }: { label: string; children: React.ReactNode }) 
   return <div><div className="mb-1 text-xs font-medium text-slate-500">{label}</div>{children}</div>
 }
 
-function barTrace(bars: { id: string; description: string; count: number; padj: number | null }[]) {
+const METRIC_AXIS: Record<BarMetric, string> = {
+  ratio: 'gene ratio (k/n)',
+  count: 'DEG count (k)',
+  fold: 'fold enrichment',
+}
+
+function barTrace(bars: ORAResult[], metric: BarMetric, nQuery: number) {
+  const value = (r: ORAResult) =>
+    metric === 'count' ? r.count
+      : metric === 'fold' ? r.foldEnrichment
+        : (nQuery ? r.count / nQuery : 0)
+  /**
+   * Colour from nlpAdj, not from −log10(padj).
+   *
+   * padj is a double, and a strongly enriched set against a 15 000-gene
+   * background lands below what a double holds — it arrives as exactly 0, and
+   * −log10(0) is Infinity, which Plotly renders by silently dropping the point
+   * from the colour scale. `nlpAdj` is the same Benjamini–Hochberg step-up
+   * carried in −log10 space precisely so those sets keep a number; see ora.ts.
+   */
+  const sig = bars.map(r => r.nlpAdj)
+  const { lo, hi } = oraColorDomain(sig)
   return {
     type: 'bar', orientation: 'h',
-    x: bars.map(t => t.count),
+    x: bars.map(value),
     // Full name, word-wrapped onto multiple lines so long MSigDB terms aren't cut off.
-    y: bars.map(t => wrapLabel(t.description, 40)),
+    y: bars.map(t => wrapLabel(t.name, 40)),
     customdata: bars.map(t => t.id),
-    // Hover shows the complete, un-wrapped name plus stats.
-    text: bars.map(t => `${t.description}<br>padj ${fmtP(t.padj)}`),
-    hovertemplate: '%{text}<br>count %{x}<extra></extra>',
+    // Hover shows the complete, un-wrapped name plus every quantity, so the
+    // three bar metrics are one selector rather than three separate figures.
+    text: bars.map(r => `${r.name}<br>${r.count}/${r.setSize} genes`
+      + ` · ratio ${(nQuery ? r.count / nQuery : 0).toFixed(3)}`
+      + ` · fold ${r.foldEnrichment.toFixed(1)}×<br>padj ${fmtP(r.padj, r.nlpAdj)}`),
+    hovertemplate: '%{text}<extra></extra>',
+    // Hover only. `text` on a bar trace is drawn INSIDE the bar by default, so
+    // three lines of statistics were being printed across every bar at four
+    // point and the figure read as a smear.
+    textposition: 'none',
     marker: {
-      color: bars.map(t => -Math.log10(Math.max(t.padj ?? 1, 1e-300))),
-      colorscale: 'YlOrRd', showscale: true,
+      color: sig, cmin: lo, cmax: hi,
+      // Plotly's own "YlOrRd" runs dark red at 0 to pale yellow at 1 — the
+      // reverse of ColorBrewer's, and the reverse of what anybody reading an
+      // enrichment figure expects. Unreversed, the most significant term in the
+      // table came out the palest thing on the page.
+      colorscale: 'YlOrRd', reversescale: true, showscale: true,
       colorbar: { title: '−log10<br>p.adjust', thickness: 12, len: 0.6 },
       line: { color: '#64748b', width: 0.5 },
     },
   }
 }
-function barLayout(n: number, label: string) {
+function barLayout(n: number, label: string, metric: BarMetric) {
   return {
     title: contrastTitle(`Over-representation — ${label}`),
     margin: { t: 34, r: 20, b: 40, l: 300 }, height: Math.max(240, n * 26 + 80),
-    xaxis: { title: 'DEG count' }, yaxis: { automargin: true, tickfont: { size: 11 } },
+    xaxis: { title: METRIC_AXIS[metric] }, yaxis: { automargin: true, tickfont: { size: 11 } },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
   }
 }
@@ -415,8 +499,15 @@ function wrapLabel(s: string, width: number): string {
     return l.match(new RegExp(`.{1,${width}}`, 'g')) || [l]
   }).join('<br>')
 }
-function fmtP(p: number | null | undefined): string {
+/**
+ * A p-value, and what to print when a double could not hold it.
+ *
+ * `nlp` is the −log10 the Benjamini–Hochberg step-up carried alongside, so an
+ * underflowed p still prints as the number it is rather than as "<1e-300" —
+ * which on the full MSigDB library is not a rare case but the top of the table.
+ */
+function fmtP(p: number | null | undefined, nlp?: number): string {
   if (p == null || Number.isNaN(p)) return '—'
-  if (p === 0) return '<1e-300'
+  if (p === 0) return nlp != null && Number.isFinite(nlp) ? `1e-${nlp.toFixed(1)}` : '<1e-300'
   return p < 1e-3 ? p.toExponential(2) : p.toFixed(4)
 }

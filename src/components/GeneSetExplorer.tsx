@@ -7,16 +7,46 @@ import { combinedScore, zscore } from '../lib/stats'
 import { hyperTail, bh } from '../lib/ora'
 import { computeSortedOrders, computeRankPositions, meanRankScore, rankRunningSum } from '../lib/scores'
 import { reportSets, useReport } from '../lib/methods'
+import type { LibraryControl } from '../lib/genesets'
+import { LibraryPicker } from './GeneSetSources'
+import SetPicker, { type PickedSet } from './SetPicker'
 import Plot from '../lib/Plot'
 
 interface Props {
   bundle: Bundle
   contrast: Contrast
   sel: GroupSel
+  /** The app's one gene-set library — see useLibrary in lib/genesets.ts. */
+  library: LibraryControl
   onSelectGene: (gene: string) => void
 }
 
-interface ParsedSet { name: string; genesUpper: string[]; nInput: number; rows: number[] }
+/**
+ * A set this tab works on, wherever it came from.
+ *
+ * `rows` are indices into the count matrix, which is what the module score
+ * walks; `genesUpper` is what the ORA and the per-gene table join on. `id` and
+ * `source` are empty for a typed set and carry MSigDB's systematic name for a
+ * set taken out of the library — a Methods section cites the second and cannot
+ * cite the first.
+ */
+interface ParsedSet {
+  /**
+   * Unique across every set on the page.
+   *
+   * The selected set used to be found by NAME, which was safe while every set
+   * was a line somebody typed and is not now: "Glycolysis" is a Hallmark set, a
+   * WikiPathways set and a plausible thing to type, and three sets answering to
+   * one name means clicking the third row opens the first.
+   */
+  key: string
+  name: string
+  id: string
+  source: string
+  genesUpper: string[]
+  nInput: number
+  rows: number[]
+}
 
 const EXAMPLE = `Inflammation: TP53, IL6, TNF, IFNG, CXCL10, STAT1, NFKB1
 Proliferation: MYC, MKI67, CCND1, EGFR, KRAS
@@ -25,7 +55,7 @@ Apoptosis: BAX, BCL2, CDKN1A, PTEN, SOD2`
 // For each user-defined gene set: its per-gene DEG statistics, how many members
 // are DEGs, and an over-representation (ORA) test as an activity readout — plus
 // a per-sample module score for cross-condition comparison.
-export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }: Props) {
+export default function GeneSetExplorer({ bundle, contrast, sel, library, onSelectGene }: Props) {
   const { counts, meta } = bundle
   const S = counts.samples.length
   const deg = bundle.degByContrast[contrast.id] || []
@@ -34,8 +64,20 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
   const [lfcMin, setLfcMin] = useState(1)
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
   const [selName, setSelName] = useState('')
+  /**
+   * Sets taken out of the library, beside the ones typed below them.
+   *
+   * Kept apart from `text` rather than written into it. A GO term is 500
+   * symbols; pasting that into the textarea would bury the reader's own three
+   * lines under a wall they cannot edit and did not write, and it would throw
+   * away the systematic id — which is the thing a Methods section quotes.
+   */
+  const [picked, setPicked] = useState<PickedSet[]>([])
   const [scoreMethod, setScoreMethod] = useState<'runningsum' | 'meanrank' | 'meanz'>('runningsum')
   const colors = conditionColors(meta.conditions)
+  const pickedIds = useMemo(() => new Set(picked.map(p => p.id)), [picked])
+  const addPicked = (p: PickedSet) =>
+    setPicked(ps => ps.some(x => x.id === p.id && x.source === p.source) ? ps : [...ps, p])
 
   const degMap = useMemo(() => {
     const m = new Map<string, DEGRow>()
@@ -58,6 +100,9 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
     return bg
   }, [deg])
   const N = background.size
+  /** The same background as a list, which is what the library picker folds on. */
+  const backgroundList = useMemo(
+    () => deg.map(r => r.gene_name || r.gene_id), [deg])
   const degUpper = useMemo(() => {
     const s = new Set<string>()
     for (const r of deg) {
@@ -71,20 +116,30 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
   }, [deg, padjMax, lfcMin, direction])
   const n = useMemo(() => { let c = 0; for (const g of degUpper) if (background.has(g)) c++; return c }, [degUpper, background])
 
+  /** One set, from a name and a member list, whatever produced them. */
+  const build = useMemo(() => (key: string, name: string, id: string, source: string, members: string[]): ParsedSet => {
+    const toks = Array.from(new Set(members.map(x => x.trim().toUpperCase()).filter(Boolean)))
+    const rows: number[] = []; const seen = new Set<number>()
+    for (const tk of toks) {
+      const i = counts.index.get(tk)
+      if (i !== undefined && !seen.has(i)) { seen.add(i); rows.push(i) }
+    }
+    return { key, name, id, source, genesUpper: toks, nInput: toks.length, rows }
+  }, [counts])
+
   const sets = useMemo<ParsedSet[]>(() => {
-    const out: ParsedSet[] = []
+    // Library sets first — they were chosen deliberately, and a typed line is
+    // the ad-hoc thing beside them.
+    const out: ParsedSet[] = picked.map(p => build(`lib:${p.source}/${p.id}`, p.name, p.id, p.source, p.genes))
     for (const line of text.split('\n')) {
       const t = line.trim(); if (!t) continue
       const ci = t.indexOf(':')
       const name = ci > 0 ? t.slice(0, ci).trim() : `Set ${out.length + 1}`
       const body = ci > 0 ? t.slice(ci + 1) : t
-      const toks = Array.from(new Set(body.split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(Boolean)))
-      const rows: number[] = []; const seen = new Set<number>()
-      for (const tk of toks) { const i = counts.index.get(tk); if (i !== undefined && !seen.has(i)) { seen.add(i); rows.push(i) } }
-      out.push({ name, genesUpper: toks, nInput: toks.length, rows })
+      out.push(build(`typed:${out.length}:${name}`, name, '', 'typed here', body.split(/[\s,;]+/)))
     }
     return out.filter(s => s.nInput > 0)
-  }, [text, counts])
+  }, [text, picked, build])
 
   // Per-set overlap + ORA enrichment (BH across the defined sets).
   const setRows = useMemo(() => {
@@ -94,14 +149,14 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
       const k = inBg.filter(g => degUpper.has(g)).length
       const p = K > 0 && n > 0 ? hyperTail(k, K, n, N) : 1
       const fold = n > 0 && K > 0 ? (k / n) / (K / N) : 0
-      return { name: s.name, nInput: s.nInput, K, k, fold, p }
+      return { key: s.key, name: s.name, id: s.id, source: s.source, nInput: s.nInput, nScored: s.rows.length, K, k, fold, p }
     })
     const padj = bh(rows.map(r => r.p))
     return rows.map((r, i) => ({ ...r, padj: padj[i] }))
   }, [sets, background, degUpper, n, N])
 
-  const selected = setRows.find(r => r.name === selName) || setRows[0]
-  const selSet = sets.find(s => s.name === selected?.name)
+  const selected = setRows.find(r => r.key === selName) || setRows[0]
+  const selSet = sets.find(s => s.key === selected?.key)
   const memberStats = useMemo(() => (selSet?.genesUpper || []).map(g => {
     const d = degMap.get(g)
     return { g, d, comb: d ? combinedScore(d.log2FoldChange, d.pvalue) : null, rank: rankMap.get(g) }
@@ -117,9 +172,15 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
   // The full-genome sort is only needed for the rank-based methods AND only once
   // gene sets exist — computing it eagerly on mount froze large datasets (78k genes).
   // Tell the Methods tab which scoring method and thresholds are in play.
+  const librarySources = useMemo(
+    () => [...new Set(picked.map(p => p.source))].sort(), [picked])
   useReport(
-    () => reportSets({ nSets: sets.length, scoreMethod, padjMax, lfcMin, direction }),
-    [sets.length, scoreMethod, padjMax, lfcMin, direction].join('|'),
+    () => reportSets({
+      nSets: sets.length, nLibrary: picked.length, librarySources,
+      scoreMethod, padjMax, lfcMin, direction,
+    }),
+    [sets.length, picked.length, librarySources.join(','),
+      scoreMethod, padjMax, lfcMin, direction].join('|'),
   )
 
   const needScores = sets.length > 0 && scoreMethod !== 'meanz'
@@ -141,7 +202,7 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
           : meanZ(rows)
     } catch { return new Array(S).fill(0) }
   }
-  const moduleBySet = useMemo(() => sets.map(s => ({ name: s.name, moduleByCol: scoreSet(s.rows) })),
+  const moduleBySet = useMemo(() => sets.map(s => ({ name: s.name, key: s.key, n: s.rows.length, moduleByCol: scoreSet(s.rows) })),
     [sets, scoreMethod, orders, rankPos, counts, S, nGenes])
 
   const boxTraces = useMemo(() => {
@@ -159,10 +220,40 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
 
   return (
     <div className="space-y-4">
-      {/* input + thresholds */}
+      {/* where the sets come from, then the thresholds they are read against */}
       <div className="card p-4">
+        {/* The same library the Enrichment tab tests against, and the same
+            control — a set scored here and a set tested there should not be
+            drawn from two different places, and the reader's own pasted
+            collections belong to both. */}
+        <LibraryPicker library={library} background={backgroundList}
+          recorded={bundle.meta.species} />
+
         <label className="mb-1 block text-sm font-medium text-slate-600 dark:text-slate-300">
-          Define gene sets — one per line, <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">Name: GENE1, GENE2, …</code>
+          Take a set from the library
+        </label>
+        <SetPicker library={library} onPick={addPicked} disabledIds={pickedIds} />
+        {picked.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {picked.map(p => (
+              <span key={`${p.source}/${p.id}`}
+                className="pill border border-indigo-300 bg-indigo-50 p-0 text-indigo-700 dark:border-indigo-500/40 dark:bg-indigo-500/15 dark:text-indigo-300">
+                <span className="py-0.5 pl-2 pr-1" title={`${p.id} · ${p.source} · ${p.genes.length} genes`}>
+                  {p.name}
+                  <span className="ml-1.5 opacity-70">{p.genes.length}</span>
+                </span>
+                <button className="pressable rounded-r-full py-0.5 pl-1 pr-2 opacity-70 hover:opacity-100"
+                  aria-label={`Remove ${p.name}`} title={`Remove ${p.name}`}
+                  onClick={() => setPicked(ps => ps.filter(x => x.id !== p.id || x.source !== p.source))}
+                >&times;</button>
+              </span>
+            ))}
+            <button className="btn py-0.5 text-xs" onClick={() => setPicked([])}>Remove all</button>
+          </div>
+        )}
+
+        <label className="mb-1 mt-4 block text-sm font-medium text-slate-600 dark:text-slate-300">
+          &hellip;or define your own — one per line, <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">Name: GENE1, GENE2, …</code>
         </label>
         <textarea className="input h-24 w-full font-mono text-xs" placeholder={EXAMPLE} value={text} onChange={e => setText(e.target.value)} />
         <div className="mt-2 flex flex-wrap items-end gap-4 text-xs">
@@ -180,7 +271,10 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
       </div>
 
       {sets.length === 0 ? (
-        <div className="card p-12 text-center text-sm text-slate-400">Define one or more gene sets to see their DEG statistics and enrichment.</div>
+        <div className="card p-12 text-center text-sm text-slate-400">
+          Search the library above, or define a set of your own, to see its DEG statistics,
+          its enrichment, and its activity in every sample.
+        </div>
       ) : (
         <>
           {/* set-level DEG overlap + ORA enrichment */}
@@ -193,6 +287,7 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
                 <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-3 py-2">Gene set</th>
+                    <th className="px-3 py-2">source</th>
                     <th className="px-3 py-2 text-right">genes (found/input)</th>
                     <th className="px-3 py-2 text-right">DEGs</th>
                     <th className="px-3 py-2 text-right">% DEG</th>
@@ -203,9 +298,12 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
                 </thead>
                 <tbody>
                   {setRows.map(r => (
-                    <tr key={r.name} onClick={() => setSelName(r.name)}
-                      className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 ${selected?.name === r.name ? 'bg-indigo-50/60 dark:bg-slate-800' : 'hover:bg-indigo-50/40'}`}>
+                    <tr key={r.key} onClick={() => setSelName(r.key)}
+                      className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 ${selected?.key === r.key ? 'bg-indigo-50/60 dark:bg-slate-800' : 'hover:bg-indigo-50/40'}`}>
                       <td className="px-3 py-1.5 font-medium">{r.name}</td>
+                      <td className="px-3 py-1.5 text-xs text-slate-400" title={r.id || undefined}>
+                        {r.source}
+                      </td>
                       <td className="px-3 py-1.5 text-right font-mono text-slate-500">{r.K}/{r.nInput}</td>
                       <td className="px-3 py-1.5 text-right font-mono font-semibold text-indigo-600">{r.k}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{r.K ? (100 * r.k / r.K).toFixed(0) : '0'}%</td>
@@ -295,7 +393,21 @@ export default function GeneSetExplorer({ bundle, contrast, sel, onSelectGene }:
                 each gene's distance from its across-sample average, averaged over the set. Easy to read but wobbles with few replicates.
               </Method>
             </dl>
-            <p className="mt-2 text-xs text-slate-400">All three are per-sample; higher = the set is more active in that sample. (The enrichment table above is DEG-based instead.)</p>
+            <p className="mt-2 text-xs text-slate-400">
+              All three are per-sample; higher = the set is more active in that sample. (The
+              enrichment table above is DEG-based instead.)
+            </p>
+            {/* How many genes each box was actually built from.
+                The table above reports K — members present in the DEG
+                background — and the score walks the COUNT MATRIX, which is a
+                different list. A 289-gene MSigDB term of which this experiment
+                quantified 40 is a perfectly good score and a bad one to read as
+                289 genes' worth of evidence, so the number is on the card
+                rather than inferable from another one. */}
+            <p className="mt-1 text-xs text-slate-400">
+              Scored on the members this bundle quantifies:{' '}
+              {moduleBySet.map(m => `${m.name} ${m.n}/${sets.find(s => s.key === m.key)?.nInput ?? m.n}`).join(' · ')}.
+            </p>
           </div>
         </>
       )}

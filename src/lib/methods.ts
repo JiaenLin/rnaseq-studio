@@ -32,6 +32,17 @@ export interface OraParams {
 }
 export interface SetParams {
   nSets: number
+  /**
+   * How many of them were taken out of the library rather than typed.
+   *
+   * The sentence used to say "user-defined gene sets" unconditionally, which
+   * was true while typing was the only way in. A set scored from MSigDB has a
+   * source and a systematic id and a paper behind it, and calling it
+   * user-defined in a Methods section misdescribes where it came from.
+   */
+  nLibrary: number
+  /** The collections those came from, so the sentence can cite them. */
+  librarySources: string[]
   scoreMethod: 'runningsum' | 'meanrank' | 'meanz'
   padjMax: number
   lfcMin: number
@@ -149,13 +160,38 @@ const REFS: Record<string, RefEntry> = {
 }
 
 /** Map a gene-set collection name from the bundle to its primary citation. */
+/**
+ * Every collection label the shipped manifest offers.
+ *
+ * Kept as a list rather than inferred, because the question this answers is
+ * "did this come from MSigDB", and the only sources that did not are the ones
+ * the reader brought — whose names are arbitrary and must not be guessed at.
+ * Falling through to no citation is the safe direction: an uncited line is a
+ * gap an author fills, a wrongly cited one is a claim they did not make.
+ *
+ * Must agree with public/genesets/manifest.json; scripts/test-genesets.mjs
+ * checks that it does.
+ */
+export const MSIGDB_COLLECTIONS = new Set([
+  'Hallmark', 'KEGG', 'KEGG (orthologs)', 'Reactome', 'WikiPathways', 'PID',
+  'BioCarta', 'Canonical (other)', 'Metabolic',
+  'GO:BP', 'GO:MF', 'GO:CC', 'Human phenotype', 'Mouse phenotype',
+  'Cell type', 'Perturbations', 'Immunologic', 'Vaccine response', 'Oncogenic',
+  'TF targets', 'miRNA targets',
+  'Cancer atlas (3CA)', 'Cancer modules', 'Cancer neighbourhoods',
+  'Copy-number correlates', 'Positional',
+])
+
 function sourceRef(src: string): string | null {
   const s = src.toLowerCase()
-  if (s.includes('hallmark') || s.includes('msigdb')) return 'msigdb'
   if (s.includes('kegg')) return 'kegg'
   if (s.includes('reactome')) return 'reactome'
   if (s.includes('wikipathway')) return 'wikipathways'
-  if (s.startsWith('go') || s.includes('gene ontology')) return 'go'
+  if (s.startsWith('go:') || s.includes('gene ontology')) return 'go'
+  if (s.includes('msigdb')) return 'msigdb'
+  // Every other shipped collection is MSigDB's, including Metabolic — which is
+  // assembled from the collections above and carries no database of its own.
+  if (MSIGDB_COLLECTIONS.has(src)) return 'msigdb'
   return null
 }
 
@@ -289,9 +325,21 @@ export function buildDoc(
   const withSets = include.has('sets') && s.sets && s.sets.nSets > 0
   if (withSets && s.sets) {
     const g = s.sets
+    const nOwn = Math.max(0, g.nSets - g.nLibrary)
+    const cited = g.librarySources.map(src => {
+      const key = sourceRef(src)
+      return key ? `${src}{{${key}}}` : src
+    })
+    // Named separately because they are different objects: one is a published
+    // set with an id a reader can look up, the other is a list this study drew.
+    const what = [
+      g.nLibrary > 0
+        && `${g.nLibrary} gene set${g.nLibrary > 1 ? 's' : ''}`
+        + (cited.length ? ` from ${list(cited)}` : ''),
+      nOwn > 0 && `${nOwn} user-defined gene set${nOwn > 1 ? 's' : ''}`,
+    ].filter(Boolean) as string[]
     sentences.push(
-      `Per-sample activity of ${g.nSets} user-defined gene set${g.nSets > 1 ? 's' : ''} was scored with ` +
-      `${SCORE_TEXT[g.scoreMethod]}.`)
+      `Per-sample activity of ${list(what)} was scored with ${SCORE_TEXT[g.scoreMethod]}.`)
     if (!s.seen.sets) unseen.push('gene-set activity')
   }
 

@@ -49,6 +49,19 @@ export interface ManifestSource {
    * distributable. Carried this far so the interface can say so.
    */
   projected?: boolean
+  /**
+   * The collections this one was assembled from, when it is not a database of
+   * its own — Metabolic, which scripts/derive-metabolic.mjs selects out of the
+   * pathway collections and GO by name.
+   *
+   * Carried because the interface has two things to say about such a
+   * collection that it cannot say about KEGG. Where its sets came from, so a
+   * hit reads as the pathway it is rather than as a second independent line of
+   * evidence. And what it costs: the sets carry their OWN ids so that enabling
+   * it always adds them, which means a pathway also present in an enabled
+   * parent is tested twice and corrected across twice.
+   */
+  derived?: string[]
 }
 
 export interface Manifest {
@@ -191,6 +204,7 @@ export function indexFor(collections: Collection[], background: string[]): SetIn
   const sets: IndexedSet[] = []
   const sources: string[] = []
   const hits: number[][] = []
+  const byId = new Set<string>()
   let species = '', release = ''
 
   for (const c of collections) {
@@ -216,6 +230,21 @@ export function indexFor(collections: Collection[], background: string[]): SetIn
       return (seen[gi] = at)
     }
     for (const s of c.sets) {
+      // One id, one test.
+      //
+      // No two MSigDB collections share an id — every one of them is a
+      // separate database, and the Metabolic library carries its own prefixed
+      // ids precisely so that it is a collection rather than a fold of
+      // others. What this guards is the case a reader can create: a custom GMT
+      // repeating an MSigDB set, which would otherwise put HALLMARK_GLYCOLYSIS
+      // in the table twice and into the Benjamini–Hochberg correction twice,
+      // for one pathway.
+      //
+      // The first enabled collection carrying the id wins, so the source
+      // column names where it was read from and the members are that
+      // collection's.
+      if (byId.has(s.id)) continue
+      byId.add(s.id)
       const members: number[] = []
       for (let i = 0; i < s.genes.length; i++) {
         const at = idxOfMember(s.genes[i])
@@ -281,61 +310,226 @@ export function loadCollection(file: string): Promise<Collection> {
 /** Whether a collection is already in hand, so a caller can skip a spinner. */
 export const isLoaded = (file: string) => cache.has(file)
 
+
+/* ---------------------------------------------------------------------------
+   Gene sets the reader brings.
+--------------------------------------------------------------------------- */
+
 /**
- * A GMT file the reader supplies, as a Collection.
+ * Gene sets as somebody actually has them, in whatever they were written in.
  *
- * The Broad's own interchange format and what every other enrichment tool
- * imports: one set per line, tab separated — name, a description column nobody
- * agrees on, then the members. A lab with its own signatures could not test
- * them here at all before this; they could paste a gene list for a module
- * score, which is a different question with a different answer.
+ * This used to be `parseGmt` and took a GMT and nothing else — the Broad's
+ * interchange format, and almost nobody's working format. What a bulk RNA-seq
+ * user has in front of them is the dict they built the analysis with, in the
+ * notebook or the R script that made the counts:
  *
- * Symbols are pooled across the file the way `parse` pools them, so a custom
- * library of a thousand sets costs one dictionary rather than a thousand
- * arrays of strings. Casing is kept as written — `indexFor` upper-cases when it
- * folds a library against an object, so a GMT in either convention resolves.
+ *     pathway_genes = {
+ *         "BCAA catabolism": ["Bcat2", "Bckdha", "Dbt"],
+ *         "TCA cycle":       ["Cs", "Aco2", "Mdh2"],
+ *     }
+ *
+ * — Python or R or JSON, with a variable name in front, trailing commas, single
+ * or double quotes, comments, and newlines inside the lists. Asking somebody to
+ * convert that to tab-separated triples first is asking them to write a script
+ * in order to use a studio whose whole premise is not having to.
+ *
+ * Five shapes, tried in this order:
+ *
+ *   json    well-formed JSON — an object of name to list, an object of name to
+ *           {genes: [...]}, or an array of {name, genes} records
+ *   dict    a scan for `name: [ ... ]` pairs, quoted or bare, so a Python dict,
+ *           an R `list(x = c(...))` and a JSON file with a trailing comma all
+ *           read the same way
+ *   gmt     tab separated — the Broad's format, and an Excel paste, which are
+ *           the same thing except for whether the second column is a
+ *           description or the first gene
+ *   lines   `Name: a, b, c`, one set per line, which is what people type — and
+ *           what the Gene sets tab has always accepted, so a set typed there
+ *           can be pasted here unchanged
+ *   words   no set names anywhere — one set, out of every symbol found
+ *
+ * The scan is deliberately not a parser. A real JSON parse fails on a trailing
+ * comma and a Python literal is not JSON at all; somebody pasting out of a
+ * notebook should not be told their input is malformed because of a comma their
+ * own language allows. So the strict parse is tried first and its failure costs
+ * nothing, and everything after it is tolerant by construction: it can only
+ * find fewer sets than were meant, never throw on syntax — and the editor shows
+ * what it found before anything is added, so finding fewer is visible rather
+ * than silent.
+ *
+ * Symbols are pooled across the whole input the way `parse` pools them, so a
+ * library of a thousand sets costs one dictionary rather than a thousand arrays
+ * of strings. Casing is kept as written — `indexFor` upper-cases when it folds a
+ * library against a bundle, so either convention resolves.
  */
-export function parseGmt(text: string, name = 'My sets'): Collection {
+
+/** Keys a record might carry its name under. */
+const NAME_KEYS = ['name', 'id', 'set', 'pathway', 'term', 'geneset', 'gene_set', 'label']
+/** Keys a record might carry its members under. */
+const GENE_KEYS = ['genes', 'members', 'symbols', 'gene_symbols', 'genesymbols', 'ids', 'list']
+
+/**
+ * Is this second tab-separated field a GMT description, or the first gene?
+ *
+ * A GMT's second column is a description nobody agrees on — often empty, a URL,
+ * or a sentence. A spreadsheet pasted out of Excel has no such column and its
+ * second field is a gene. Guessing wrong either drops a real gene or adds a
+ * sentence to a set, so the guess is made on what the field looks like rather
+ * than on the format being declared: a gene symbol is one word, and none of
+ * them is a URL or a placeholder.
+ */
+const looksLikeDescription = (f: string): boolean =>
+  f === '' || /\s/.test(f) || /^https?:/i.test(f)
+  || ['na', 'n/a', 'none', 'null', '-', '.', '?'].includes(f.toLowerCase())
+
+export function parseSets(text: string, name = 'My sets'): Collection {
+  const body = text.trim()
+  if (!body) throw new Error('nothing to read — paste your gene sets first')
+
   const at = new Map<string, number>()
   const symbols: string[] = []
   const sets: CollectionSet[] = []
-  const seen = new Set<string>()
-  let line = 0
+  /** Set name -> where it sits in `sets`, so a repeat can replace it. */
+  const seen = new Map<string, number>()
 
-  for (const raw of text.split('\n')) {
-    line++
-    const t = raw.trim()
-    // Blank lines and comments — GMTs in the wild carry both.
-    if (!t || t.startsWith('#')) continue
-    const parts = t.split('\t').map(x => x.trim())
-    if (parts.length < 3) {
-      // Some exports use spaces. Fall back rather than rejecting the file, but
-      // only when there is no tab at all, so a real GMT is never re-split.
-      if (t.includes('\t')) continue
-      const sp = t.split(/\s+/)
-      if (sp.length < 3) continue
-      parts.length = 0
-      parts.push(sp[0], '', ...sp.slice(1))
-    }
-    const id = parts[0]
-    if (!id || seen.has(id)) continue
-    seen.add(id)
+  /**
+   * A repeated name REPLACES, and that is not a preference.
+   *
+   * `JSON.parse` resolves a duplicated key to the last one before this function
+   * is ever called, so the JSON path cannot do anything else — and Python and R
+   * resolve their own literals the same way. First-wins on the text paths would
+   * therefore have meant the same input giving two different answers depending
+   * on whether it happened to be strict JSON, which is a worse property than
+   * either rule. Last wins everywhere, as the languages the input was written
+   * in already decided.
+   */
+  const add = (id: unknown, members: unknown[]) => {
+    const clean = String(id ?? '').trim().replace(/\s+/g, ' ')
+    // A name that is only punctuation is a parse artefact, not a set.
+    if (!clean || !/[A-Za-z0-9]/.test(clean)) return
     const genes: number[] = []
     const inSet = new Set<number>()
-    for (let i = 2; i < parts.length; i++) {
-      const g = parts[i]
+    for (const raw of members) {
+      if (raw === null || raw === undefined || typeof raw === 'object') continue
+      const g = String(raw).trim().replace(/^['"]|['"]$/g, '')
       if (!g) continue
       let k = at.get(g)
       if (k === undefined) { k = symbols.length; at.set(g, k); symbols.push(g) }
       if (!inSet.has(k)) { inSet.add(k); genes.push(k) }
     }
-    if (!genes.length) continue
-    sets.push({ id, name: id.replace(/_/g, ' '), genes: Int32Array.from(genes) })
+    if (!genes.length) return
+    const set = { id: clean, name: clean, genes: Int32Array.from(genes) }
+    const was = seen.get(clean)
+    if (was === undefined) { seen.set(clean, sets.length); sets.push(set) }
+    else sets[was] = set
   }
-  if (!sets.length) {
+
+  const done = () => sets.length > 0
+  const out = (): Collection =>
+    ({ species: 'any', source: name, release: 'pasted', symbols, sets })
+
+  /** Every quoted or bare token in a member list, in order. */
+  const membersOf = (chunk: string): string[] => {
+    const quoted = [...chunk.matchAll(/(['"])(.*?)\1/g)].map(m => m[2])
+    if (quoted.length) return quoted
+    // Unquoted — an R `c(Cs, Aco2)` or a bare comma list. `c` is the function,
+    // not a gene, and neither is a bracket left over by the split.
+    return chunk.split(/[,;\s]+/).filter(w => w && w !== 'c' && /[A-Za-z0-9]/.test(w))
+  }
+
+  const pick = (rec: Record<string, unknown>, keys: string[]): unknown => {
+    for (const k of Object.keys(rec)) if (keys.includes(k.toLowerCase())) return rec[k]
+    return undefined
+  }
+
+  // 1. Well-formed JSON, in the three shapes it comes in.
+  try {
+    const j: unknown = JSON.parse(body)
+    if (Array.isArray(j)) {
+      for (const it of j) {
+        if (!it || typeof it !== 'object') continue
+        const rec = it as Record<string, unknown>
+        const g = pick(rec, GENE_KEYS)
+        if (Array.isArray(g)) add(pick(rec, NAME_KEYS) ?? `set ${sets.length + 1}`, g)
+      }
+    } else if (j && typeof j === 'object') {
+      for (const [k, v] of Object.entries(j as Record<string, unknown>)) {
+        if (Array.isArray(v)) add(k, v)
+        else if (v && typeof v === 'object') {
+          const g = pick(v as Record<string, unknown>, GENE_KEYS)
+          if (Array.isArray(g)) add(k, g)
+        }
+      }
+    }
+    if (done()) return out()
+  } catch { /* not JSON, or not valid JSON — the scan below does not care */ }
+
+  // 2. `name: [ ... ]` pairs, wherever they are. A variable name in front, a
+  //    trailing comma and a comment are simply not matched rather than errors.
+  //    The key may be quoted or bare, so Python, JSON and R all land here.
+  const pairs = [...body.matchAll(
+    /(?:(['"])(.+?)\1|([A-Za-z_][A-Za-z0-9_.\- ]*))\s*[:=]\s*(?:c\s*)?[[(]([^\])]*)[\])]/g)]
+  if (pairs.length) {
+    for (const m of pairs) add(m[2] ?? m[3], membersOf(m[4]))
+    if (done()) return out()
+  }
+
+  const lines = body.split('\n').map(l => l.replace(/\r$/, '').trim())
+    .filter(l => l && !l.startsWith('#'))
+
+  // 3. Tab separated: a GMT, or a spreadsheet. Same handling either way, with
+  //    the second field kept unless it reads like a description.
+  if (lines.some(l => l.includes('\t'))) {
+    for (const l of lines) {
+      const parts = l.split('\t').map(x => x.trim())
+      if (parts.length < 2) continue
+      const rest = parts.length >= 3 && looksLikeDescription(parts[1])
+        ? parts.slice(2)
+        : parts.slice(1)
+      add(parts[0], rest)
+    }
+    if (done()) return out()
+  }
+
+  // 4. `Name: a, b, c` — one set per line, which is what people type.
+  if (lines.some(l => /^[^:]+:/.test(l))) {
+    for (const l of lines) {
+      const cut = l.indexOf(':')
+      if (cut <= 0) continue
+      add(l.slice(0, cut), membersOf(l.slice(cut + 1)))
+    }
+    if (done()) return out()
+  }
+
+  // 5. No names anywhere: one set, out of everything that looks like a symbol.
+  add(name, membersOf(body))
+  if (!done()) {
     throw new Error(
-      `no gene sets found in ${line} line${line === 1 ? '' : 's'} — a GMT has one set per line: `
-      + 'name, a description column, then the gene symbols, separated by tabs')
+      'no gene sets found. Paste a dict of name to gene list, a GMT, '
+      + '"Name: gene, gene" lines, or a plain list of genes for a single set')
   }
-  return { species: 'any', source: name, release: 'your file', symbols, sets }
+  return out()
+}
+
+/**
+ * A collection written back out as text the editor can show and the parser can
+ * read again.
+ *
+ * `Name: a, b, c` per line — one of the forms `parseSets` accepts, chosen here
+ * because it is the one a person can read and edit in a textarea. GMT's tabs
+ * are invisible, and a JSON dict is the thing they pasted rather than the thing
+ * they now want to amend.
+ *
+ * The round trip is a real property, not a convenience: it is what makes a
+ * custom collection EDITABLE rather than delete-and-retype. Pinned in
+ * scripts/test-ora.mjs — parse(toText(c)) has to give back the same sets with
+ * the same members in the same order.
+ *
+ * The set's readable NAME, not its id. For a pasted collection they are the same
+ * string, and for anything else the name is what the reader wrote down.
+ */
+export function collectionToText(c: Collection): string {
+  return c.sets
+    .map(s => `${s.name}: ${Array.from(s.genes, g => c.symbols[g]).join(', ')}`)
+    .join('\n')
 }

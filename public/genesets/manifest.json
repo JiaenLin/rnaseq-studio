@@ -17,6 +17,27 @@
           "projected": false
         },
         {
+          "source": "Metabolic",
+          "file": "human.metabolic.gs",
+          "nSets": 2610,
+          "nGenes": 7578,
+          "bytes": 229177,
+          "on": false,
+          "projected": false,
+          "derived": [
+            "Hallmark",
+            "KEGG",
+            "Reactome",
+            "WikiPathways",
+            "PID",
+            "BioCarta",
+            "Canonical (other)",
+            "GO:BP",
+            "GO:MF",
+            "GO:CC"
+          ]
+        },
+        {
           "source": "KEGG",
           "file": "human.kegg.gs",
           "nSets": 844,
@@ -229,6 +250,25 @@
           "bytes": 30881,
           "on": true,
           "projected": false
+        },
+        {
+          "source": "Metabolic",
+          "file": "mouse.metabolic.gs",
+          "nSets": 2360,
+          "nGenes": 7080,
+          "bytes": 211596,
+          "on": false,
+          "projected": false,
+          "derived": [
+            "Hallmark",
+            "KEGG (orthologs)",
+            "Reactome",
+            "WikiPathways",
+            "BioCarta",
+            "GO:BP",
+            "GO:MF",
+            "GO:CC"
+          ]
         },
         {
           "source": "KEGG (orthologs)",

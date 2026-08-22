@@ -1,24 +1,29 @@
 // The gene-set library, as the app consumes it.
 //
-// This file used to BE the library: eighteen sets typed out by hand, with a
-// comment explaining that an .h5ad carries no gene sets so the studio had to
-// bring its own. The first half of that was true and the second half was a
-// choice, and it was the wrong one — an over-representation test against
-// eighteen sets somebody picked in advance cannot discover anything they did
-// not already suspect, and the p-values it prints look exactly like real ones.
+// The library used to arrive with the data. A bundle carried genesets.csv,
+// written by export-bundle.R, which meant whichever collections that one export
+// happened to include, filtered to that one experiment's background — and a
+// bundle exported without it could not run enrichment at all. Which collections
+// a reader could test against was decided months earlier by whoever ran the
+// pipeline, and nothing on screen said so.
 //
-// It is MSigDB now, per species, fetched on demand. What is left here is the
-// wiring: which collections are enabled, loading them, and folding them against
-// the object to make the index ORA runs on.
+// It is MSigDB now, per species, fetched on demand, plus the assembled
+// Metabolic library. What is left here is the wiring: which collections are
+// enabled, loading them, and folding them against the contrast to make the
+// index ORA runs on. A bundle's own genesets.csv is still read and is offered
+// as one more collection beside them — see `embeddedCollection`.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   indexFor, isLoaded, loadCollection, loadManifest,
   type Collection, type Manifest, type SetIndex,
 } from './msigdb.ts'
-import type { Species } from './species.ts'
+import { detectSpecies, speciesOfMeta, type Detection, type Species } from './species.ts'
+
+import type { GeneSetDef } from '../types'
 
 export type { SetIndex } from './msigdb.ts'
+export type { Collection } from './msigdb.ts'
 
 export interface LibraryState {
   /** What each species offers, or null until the manifest lands. */
@@ -151,3 +156,135 @@ export function useSetIndex(collections: Collection[], background: string[]): Se
     () => (collections.length ? indexFor(collections, background) : null),
     [collections, background])
 }
+
+/* ---------------------------------------------------------------------------
+   The library, as one thing the whole app shares.
+--------------------------------------------------------------------------- */
+
+/**
+ * The bundle's own genesets.csv, as a collection like any other.
+ *
+ * It used to be the whole library — export-bundle.R wrote five collections for
+ * Homo sapiens filtered to that experiment's background, and a bundle exported
+ * without it could not run enrichment at all. It is now one source among two
+ * dozen, which is the right relationship: it is this experiment's export, and
+ * MSigDB is the database. Named for the bundle so it cannot be mistaken for one
+ * of the shipped collections.
+ */
+export function embeddedCollection(defs: GeneSetDef[] | undefined, project: string): Collection[] {
+  if (!defs?.length) return EMPTY
+  const at = new Map<string, number>()
+  const symbols: string[] = []
+  const sets = defs.map(d => ({
+    id: d.id,
+    name: d.name || d.id,
+    genes: Int32Array.from(d.genes.map(g => {
+      let k = at.get(g)
+      if (k === undefined) { k = symbols.length; at.set(g, k); symbols.push(g) }
+      return k
+    })),
+  }))
+  return [{
+    species: 'any', source: 'From this bundle', release: project || 'this export',
+    symbols, sets,
+  }]
+}
+
+/** Everything the gene-set tabs need, owned once. */
+export interface LibraryControl {
+  lib: LibraryState
+  species: Species
+  onSpecies: (s: Species) => void
+  sources: string[]
+  onSources: (next: string[]) => void
+  customSets: Collection[]
+  onCustomSets: (next: Collection[]) => void
+  /** What the bundle's own gene names say, for the species check. */
+  detected: Detection
+  /** What the bundle RECORDED, if it recorded anything. */
+  recorded: Species | null
+}
+
+/**
+ * One library for the whole app, not one per tab.
+ *
+ * Enrichment owned all of this — species, enabled collections, the reader's own
+ * pasted sets — which had two consequences and both were bad. Gene sets could
+ * not reach MSigDB at all, so the one tab whose whole subject is gene sets was
+ * the one tab that had none; and a reader who pasted their signatures for the
+ * enrichment test had to paste them again to score them per sample, into a
+ * control that produced something the rest of the app could not see.
+ *
+ * So it is here, beside `geneText`, which lives in App for exactly the same
+ * reason: switching tabs must not discard what somebody typed.
+ *
+ * @param genes  the genes this contrast tested — the background, and the
+ *               evidence species detection runs on
+ */
+export function useLibrary(
+  genes: string[],
+  metaSpecies: string | undefined,
+  embedded: Collection[] = EMPTY,
+): LibraryControl {
+  const detected = useMemo(() => detectSpecies(genes), [genes])
+  const recorded = useMemo(() => speciesOfMeta(metaSpecies), [metaSpecies])
+
+  /**
+   * Which species' library to test against.
+   *
+   * The bundle's own meta.species is read first — it is what the lab recorded,
+   * and better evidence than anything inferable from the gene list. Detection
+   * from the gene names is the fallback for a bundle that left it blank, and
+   * the reader can override either.
+   */
+  const [pick, setPick] = useState<Species | null>(null)
+  const species = pick ?? recorded ?? detected.species
+
+  /**
+   * `null` until the defaults land — which is NOT the same as the empty array.
+   *
+   * The distinction is load-bearing. The effect below fills in the species'
+   * default collections while nothing has been chosen, and it used to test
+   * `sources.length`, so "the reader has turned every collection off" and "the
+   * reader has not chosen yet" were one state. Somebody who had pasted their
+   * own sets and switched the last MSigDB collection off — which the chips now
+   * allow, because their own library is not empty — watched all seven snap
+   * straight back on, once per click, with nothing on screen explaining it.
+   *
+   * `null` means undecided and `[]` means decided on none, so the effect fires
+   * exactly once.
+   */
+  const [chosen, setChosen] = useState<string[] | null>(null)
+  const sources = chosen ?? EMPTY_SOURCES
+  const [customSets, onCustomSets] = useState<Collection[]>([])
+
+  const all = useMemo(
+    () => (embedded.length ? [...customSets, ...embedded] : embedded.length ? embedded : customSets),
+    [customSets, embedded])
+  const lib = useGeneSets(species, sources, all)
+
+  // The species' own defaults, once the manifest says what it has. Set even
+  // when the species offers none, so this settles rather than re-running.
+  useEffect(() => {
+    if (!lib.manifest || chosen !== null) return
+    setChosen(defaultSources(lib.manifest, species))
+  }, [lib.manifest, species, chosen])
+
+  /**
+   * A species switch re-asks the question, because the answer differs.
+   *
+   * The collections are not the same on both sides — mouse has no native KEGG
+   * and no human phenotype ontology — so carrying a human selection over to
+   * mouse silently drops the ones that do not exist there and leaves the reader
+   * with fewer collections than either species offers by default.
+   */
+  const onSpecies = (next: Species) => { setPick(next); setChosen(null) }
+
+  return {
+    lib, species, onSpecies, sources, onSources: setChosen,
+    customSets, onCustomSets, detected, recorded,
+  }
+}
+
+/** One frozen empty array, so "chosen nothing" is referentially stable. */
+const EMPTY_SOURCES: string[] = []

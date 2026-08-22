@@ -21,10 +21,17 @@ sets. Everything runs client-side — **your data never leaves your device** (no
 - **Volcano** — interactive, with tunable −log10(padj) and |log2FC| cutoffs; click a point to
   jump to that gene.
 - **DEG table** — sortable/filterable, with a combined score (−log10 p × log2FC) and CSV export.
-- **Enrichment** — live, tunable over-representation analysis (ORA): set your padj / log2FC /
-  direction and watch enriched pathways update; drill into a term's genes and their stats.
-- **Gene sets** — define your own sets and get their DEG overlap, an ORA activity readout, and
-  a per-sample module score (rank running-sum, mean rank, or mean z-score).
+- **Enrichment** — live, tunable over-representation analysis (ORA) against **the whole of
+  MSigDB**, human and mouse, fetched a collection at a time: set your padj / log2FC / direction
+  and watch enriched pathways update; drill into a term's genes and their stats; export every
+  set to CSV. Bars can show gene ratio, overlap count or fold enrichment.
+- **Gene sets** — search the same library and score any set per sample, *or* define your own;
+  get their DEG overlap, an ORA activity readout, and a per-sample module score (rank
+  running-sum, mean rank, or mean z-score).
+- **Your own signatures** — paste them in whatever you have them in: a Python or R dict, JSON,
+  a GMT, `Name: gene, gene` lines, or a bare gene list. The editor shows what it understood and
+  which genes your data does not carry *before* anything is added, and your sets are then tested
+  and corrected exactly as MSigDB's are.
 - **Any comparison** — pick the control and the arms to compare. If your bundle did not export
   that pair, Studio runs **DESeq2 itself** (R compiled to WebAssembly), so every number in the
   app comes from DESeq2 — never a lighter substitute. Needs `raw_counts.csv`.
@@ -53,7 +60,7 @@ works. Zip the folder (or drop the folder itself):
 | `normalized_counts.csv` | `gene_id, [gene_name,] <sample1>, <sample2>, …` |
 | `raw_counts.csv` *(optional)* | same shape, un-normalized — lets Studio run DESeq2 on pairs you did not export |
 | `deg_<contrast>.csv` | `gene_id, gene_name, baseMean, log2FoldChange, lfcSE, pvalue, padj` |
-| `genesets.csv` *(optional)* | `source, set_id, set_name, genes` — enables live ORA |
+| `genesets.csv` *(optional)* | `source, set_id, set_name, genes` — offered as one more collection beside MSigDB |
 
 One `deg_<contrast>.csv` per contrast (named in `meta.json`); missing values may be `NA`. The
 full typed spec is in [`src/types.ts`](src/types.ts).
@@ -85,9 +92,29 @@ A citable DOI is minted per release via Zenodo; a software paper is in `paper/`.
 ```bash
 npm install
 node scripts/gen-sample.mjs   # regenerate the demo bundle in public/sample/
+npm test                      # bundle parsing, the ORA maths, the gene-set library
 npm run dev                   # http://localhost:5173
 npm run build && npm run preview
 ```
+
+### The gene-set library
+
+`public/genesets/` holds MSigDB packed into a compact indexed format, one file per collection
+per species, plus a manifest the app reads before downloading anything. The assets are
+committed, so CI and the deploy need no network and no R. To rebuild them after an MSigDB
+release:
+
+```bash
+Rscript scripts/export-genesets.R scratch-msigdb/gmt   # needs R + msigdbr
+node scripts/fetch-genesets.mjs                        # pack + write the manifest
+```
+
+**Metabolic** is a collection assembled here rather than published by the Broad: MSigDB has no
+metabolic collection, so `scripts/derive-metabolic.mjs` selects the metabolic pathways and
+ontology terms out of KEGG, Reactome, WikiPathways, Hallmark, PID, BioCarta and GO by a
+hand-curated list of terms (`scripts/metabolic-terms.tsv`, one line per term, arguable in a
+diff). Its sets carry their own `METABOLIC_` ids so enabling it always adds them — which means
+a pathway also present in an enabled parent is tested twice, and the app says so on the card.
 
 Stack: React + TypeScript + Vite + Tailwind + Plotly; zip via `fflate`. No backend.
 
