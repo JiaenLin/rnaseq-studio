@@ -3,7 +3,7 @@ import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, sideLabel } from './lib/design'
 import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
-import { auditBundle, comparisonState } from './lib/contrast'
+import { auditBundle, comparisonKey, comparisonState } from './lib/contrast'
 import ComparisonBar from './components/ComparisonBar'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
@@ -160,8 +160,11 @@ export default function App() {
     if (state.source === 'bundle' && state.contrast) {
       return { bundle, contrast: state.contrast, pending: false }
     }
-    const id = computedContrastId(sel.test, sel.control)
-    const rows = computed[`${sel.test.join('+')}|${sel.control.join('+')}`]
+    // Both carry the exclusions, so a re-run with a different set of samples
+    // is a different result rather than a cache hit on the previous one.
+    const key = comparisonKey(bundle, sel.control, sel.test, sel.excluded)
+    const id = `${computedContrastId(sel.test, sel.control)}${key.includes('|-') ? key.slice(key.indexOf('|-')) : ''}`
+    const rows = computed[key]
     const contrast: Contrast = {
       id, numerator: sideLabel(sel.test), denominator: sideLabel(sel.control),
       label, deg_file: '',
@@ -203,8 +206,13 @@ export default function App() {
   const runPair = async () => {
     // Guarded on the state's own verdict rather than re-deriving one here — the
     // check that decides it lives in comparisonState, in one place.
-    if (!bundle?.rawCounts || state?.source !== 'computable') return
-    const pair = `${sel.test.join('+')}|${sel.control.join('+')}`
+    // Runnable when the pair has no table yet, AND when it has a precomputed
+    // one that cannot honour the reader's exclusions — that second case was
+    // unreachable, so the bar's own advice to "run DESeq2 here" had no button.
+    const may = state?.source === 'computable'
+      || (state?.source === 'bundle' && state.canRun && (state.staleExclusions?.length ?? 0) > 0)
+    if (!bundle?.rawCounts || !may) return
+    const pair = comparisonKey(bundle, sel.control, sel.test, sel.excluded)
     setRun({ pair, running: true, log: '' })
     const log = (m: string) => setRun(r => (r.pair === pair ? { ...r, log: m } : r))
     try {
@@ -223,7 +231,7 @@ export default function App() {
   // True when the selected pair has no DESeq2 result yet.
   const pending = !!active?.pending
   /** The run's own pair, so one pair's failure never renders under another. */
-  const myRun = run.pair === `${sel.test.join('+')}|${sel.control.join('+')}`
+  const myRun = bundle && run.pair === comparisonKey(bundle, sel.control, sel.test, sel.excluded)
     ? run : { running: false, log: '' }
 
   return (

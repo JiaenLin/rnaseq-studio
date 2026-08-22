@@ -5,7 +5,8 @@
 // advertising more replicates than the matrix holds, a pair offered for a
 // DESeq2 run that could never have enough replicates.
 
-import { auditBundle, comparisonState, conditionSizes, matchPrecomputed } from '../src/lib/contrast.ts'
+import { auditBundle, comparisonKey, comparisonState, conditionSizes, matchPrecomputed, relevantExclusions }
+  from '../src/lib/contrast.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -116,6 +117,63 @@ console.log('\nWHAT CANNOT BE ASKED, AND WHY')
     comparisonState(b3, ['WT'], ['WT'], [], {}).blocked.includes('both sides'), true)
   check('an empty side says so',
     comparisonState(b3, ['WT'], [], [], {}).blocked.includes('each side'), true)
+}
+
+console.log('\nA RESULT IS CACHED UNDER THE SAMPLES IT WAS COMPUTED FROM')
+{
+  const b = mk({ conditions: ['WT', 'KO'], control: 'WT', reps: 6 })
+  const k0 = comparisonKey(b, ['WT'], ['KO'], [])
+  const k1 = comparisonKey(b, ['WT'], ['KO'], ['KO_1'])
+  const k2 = comparisonKey(b, ['WT'], ['KO'], ['KO_2'])
+  // The bug this pins: the key was the two group lists and nothing else, so a
+  // run with KO_1 excluded and a run with KO_2 excluded collided — the app
+  // served the first one's numbers under the second one's label.
+  check('excluding a sample changes the key', k0 === k1, false)
+  check('and excluding a DIFFERENT one is different again', k1 === k2, false)
+  check('the same exclusion in another order is the same key',
+    comparisonKey(b, ['WT'], ['KO'], ['KO_1', 'KO_2']),
+    comparisonKey(b, ['WT'], ['KO'], ['KO_2', 'KO_1']))
+
+  // An exclusion outside the compared groups changes nothing, so it must NOT
+  // invalidate the cache — otherwise toggling an unrelated sample throws away
+  // a valid run.
+  const b3 = mk({ conditions: ['WT', 'KO', 'Other'], control: 'WT', reps: 6 })
+  check('an unrelated exclusion keeps the key',
+    comparisonKey(b3, ['WT'], ['KO'], ['Other_1']),
+    comparisonKey(b3, ['WT'], ['KO'], []))
+  check('and is reported as irrelevant',
+    relevantExclusions(b3, ['WT'], ['KO'], ['Other_1', 'KO_3']), ['KO_3'])
+
+  // A cached run is found only under its own key.
+  check('the run is found again', comparisonState(b, ['WT'], ['KO'], ['KO_1'], { [k1]: [] }).source, 'computed')
+  check('and not under a different exclusion',
+    comparisonState(b, ['WT'], ['KO'], ['KO_2'], { [k1]: [] }).source, 'computable')
+}
+
+console.log('\nA PIPELINE TABLE THAT CANNOT HONOUR AN EXCLUSION OFFERS A RE-RUN')
+{
+  const b = mk({
+    conditions: ['WT', 'KO'], control: 'WT', reps: 6,
+    contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT', kind: 'pairwise' }],
+  })
+  const clean = comparisonState(b, ['WT'], ['KO'], [], {})
+  check('with nothing excluded it is simply the bundle table', clean.source, 'bundle')
+  check('and nothing is stale', clean.staleExclusions, [])
+
+  const st = comparisonState(b, ['WT'], ['KO'], ['KO_1'], {})
+  check('it stays the bundle table', st.source, 'bundle')
+  // The defect from the report: the bar said "run DESeq2 here" and the button
+  // was rendered for 'computable' only, so there was nothing to press.
+  check('but names what it still contains', st.staleExclusions, ['KO_1'])
+  check('and says a re-run is possible', st.canRun, true)
+
+  // No raw counts: the offer has to be withdrawn rather than made and refused.
+  const b2 = mk({
+    conditions: ['WT', 'KO'], control: 'WT', reps: 6, raw: false,
+    contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT', kind: 'pairwise' }],
+  })
+  check('without raw counts there is no re-run',
+    comparisonState(b2, ['WT'], ['KO'], ['KO_1'], {}).canRun, false)
 }
 
 console.log('\nEXCLUSIONS REACH THE REPLICATE COUNTS')

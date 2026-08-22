@@ -81,6 +81,38 @@ export function matchPrecomputed(
     && (bundle.degByContrast[c.id]?.length ?? 0) > 0) ?? null
 }
 
+/**
+ * The exclusions that actually change THIS comparison.
+ *
+ * An excluded Ctrl_Cold sample cannot affect a KO_Thermo vs KO_Cold run, so it
+ * has no business in the cache key — including it would throw away a valid
+ * result every time an unrelated sample was toggled.
+ */
+export function relevantExclusions(
+  bundle: Bundle, control: readonly string[], test: readonly string[], excluded: readonly string[],
+): string[] {
+  const cond = new Map(bundle.samples.map(s => [s.sample, s.condition]))
+  const sides = new Set([...control, ...test])
+  return excluded.filter(name => sides.has(cond.get(name) ?? '')).sort()
+}
+
+/**
+ * The key a computed result is cached under.
+ *
+ * Exported and used by BOTH the state above and the runner in App, because the
+ * two must agree exactly. They did not: the key was the two group lists and
+ * nothing else, so running DESeq2 with one sample excluded and then excluding a
+ * different one hit the same cache entry — the app served the first run's
+ * numbers under the second run's label, with no way to tell from the screen.
+ */
+export function comparisonKey(
+  bundle: Bundle, control: readonly string[], test: readonly string[], excluded: readonly string[],
+): string {
+  const gone = relevantExclusions(bundle, control, test, excluded)
+  return `${[...test].join('+')}|${[...control].join('+')}`
+    + (gone.length ? `|-${gone.join(',')}` : '')
+}
+
 export type Source = 'bundle' | 'computed' | 'computable' | 'unavailable'
 
 export interface ComparisonState {
@@ -91,6 +123,17 @@ export interface ComparisonState {
   nTest: number
   /** Why it cannot be run, when `source` is 'unavailable'. */
   blocked?: string
+  /**
+   * Excluded samples this precomputed table still contains.
+   *
+   * Non-empty only when `source` is 'bundle'. The bar used to state this and
+   * then offer nothing to do about it — the run button was rendered for
+   * 'computable' alone, so "Run DESeq2 here if you need the comparison without
+   * them" pointed at a button that was not on the page.
+   */
+  staleExclusions?: string[]
+  /** Whether a run here is possible, for a comparison that already has a table. */
+  canRun?: boolean
 }
 
 /**
@@ -108,7 +151,8 @@ export function comparisonState(
 ): ComparisonState {
   const nControl = samplesInGroups(bundle.counts.samples, bundle.samples, control, excluded).length
   const nTest = samplesInGroups(bundle.counts.samples, bundle.samples, test, excluded).length
-  const key = `${[...test].join('+')}|${[...control].join('+')}`
+  const key = comparisonKey(bundle, control, test, excluded)
+  const gone = relevantExclusions(bundle, control, test, excluded)
   const base = { nControl, nTest }
 
   if (Object.prototype.hasOwnProperty.call(computedKeys, key)) {
@@ -117,8 +161,12 @@ export function comparisonState(
   const pre = matchPrecomputed(bundle, control, test)
   // A precomputed table was computed on every sample the pipeline was given, so
   // it cannot honour an exclusion made here. It is still the right thing to show
-  // — it is a real result — and the bar says what it does not know about.
-  if (pre) return { ...base, source: 'bundle', contrast: pre }
+  // — it is a real result — and `staleExclusions` is what lets the bar offer a
+  // re-run rather than only telling the reader one is needed.
+  if (pre) {
+    return { ...base, source: 'bundle', contrast: pre,
+      staleExclusions: gone, canRun: !!bundle.rawCounts && nControl >= MIN_REPLICATES && nTest >= MIN_REPLICATES }
+  }
 
   if (!control.length || !test.length) {
     return { ...base, source: 'unavailable', contrast: null,

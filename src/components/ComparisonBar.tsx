@@ -74,9 +74,13 @@ export default function ComparisonBar({
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <Provenance state={state} />
-          {state.source === 'computable' && (
+          {(state.source === 'computable'
+            || (state.source === 'bundle' && state.canRun && (state.staleExclusions?.length ?? 0) > 0)) && (
             <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
-              {running ? 'Running DESeq2…' : 'Run DESeq2 for this pair'}
+              {running ? 'Running DESeq2…'
+                : state.source === 'bundle'
+                  ? 'Re-run without the excluded samples'
+                  : 'Run DESeq2 for this pair'}
             </button>
           )}
           {running && <span className="text-xs text-slate-400">{runLog}</span>}
@@ -106,12 +110,17 @@ export default function ComparisonBar({
           the pipeline was given. It cannot honour an exclusion made here, and
           not saying so would let a reader believe an exclusion had an effect it
           did not have. */}
-      {state.source === 'bundle' && sel.excluded.length > 0 && (
+      {/* Only when the exclusion actually touches THIS comparison. Excluding a
+          Ctrl_Cold sample changes nothing about KO_Thermo vs KO_Cold, and
+          warning about it there would be noise. */}
+      {state.source === 'bundle' && (state.staleExclusions?.length ?? 0) > 0 && (
         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-          These statistics came from your pipeline and were computed over <b>all</b> samples — the{' '}
-          {sel.excluded.length} you excluded {sel.excluded.length === 1 ? 'is' : 'are'} in them.
-          Run DESeq2 here if you need the comparison without{' '}
-          {sel.excluded.length === 1 ? 'it' : 'them'}.
+          These statistics came from your pipeline and were computed over <b>all</b> samples —{' '}
+          {state.staleExclusions!.join(', ')}{' '}
+          {state.staleExclusions!.length === 1 ? 'is' : 'are'} still in them.
+          {state.canRun
+            ? ' Use the button above to re-run DESeq2 here without them.'
+            : ' This bundle has no raw_counts.csv, so the comparison cannot be re-run here.'}
         </p>
       )}
 
