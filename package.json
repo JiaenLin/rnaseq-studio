@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node scripts/test-bundle.mjs && node scripts/test-ora.mjs && node scripts/test-genesets.mjs && node scripts/test-pca.mjs && node scripts/test-contrast.mjs",
+    "test": "node scripts/test-bundle.mjs && node scripts/test-ora.mjs && node scripts/test-genesets.mjs && node scripts/test-pca.mjs && node scripts/test-contrast.mjs && node scripts/test-samplecheck.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

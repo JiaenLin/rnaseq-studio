@@ -1,6 +1,7 @@
 import type { Bundle } from '../types'
 import type { GroupSel } from '../lib/design'
 import PCAPlot from './PCAPlot'
+import SampleCheckCard from './SampleCheckCard'
 
 interface Props {
   bundle: Bundle
@@ -25,6 +26,10 @@ export default function Overview({ bundle, sel }: Props) {
           Overview because it describes the DATASET rather than a contrast —
           which also means it is available before any pair has statistics. */}
       <PCAPlot bundle={bundle} sel={sel} />
+
+      {/* The question a PCA raises but cannot answer: when the groups do not
+          separate, is that the labels or the effect size? */}
+      <SampleCheckCard bundle={bundle} />
 
       <div className="card p-4">
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Samples</h3>
