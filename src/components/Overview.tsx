@@ -1,12 +1,15 @@
 import type { Bundle } from '../types'
+import type { GroupSel } from '../lib/design'
+import PCAPlot from './PCAPlot'
 
 interface Props {
   bundle: Bundle
+  sel: GroupSel
 }
 
 // Contrasts are chosen in the comparison bar above the tabs, so this no longer
 // lists them — it describes the dataset.
-export default function Overview({ bundle }: Props) {
+export default function Overview({ bundle, sel }: Props) {
   const { meta, samples, counts } = bundle
 
   return (
@@ -17,6 +20,11 @@ export default function Overview({ bundle }: Props) {
         <Metric label="Samples" value={String(samples.length)} sub={`${counts.geneIds.length.toLocaleString()} genes`} />
         <Metric label="Reference / control" value={meta.control} sub={`engine: ${meta.engine}`} />
       </div>
+
+      {/* Before any gene: where the samples sit relative to each other. On the
+          Overview because it describes the DATASET rather than a contrast —
+          which also means it is available before any pair has statistics. */}
+      <PCAPlot bundle={bundle} sel={sel} />
 
       <div className="card p-4">
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Samples</h3>

@@ -11,6 +11,32 @@ interface PlotProps {
   downloadName?: string   // when set, shows a "⭳ PNG" button and names the export
 }
 
+/**
+ * `title: 'text'` → `title: { text: 'text' }`, everywhere in a spec.
+ *
+ * Plotly 3 dropped the bare-string form for titles, and it dropped it SILENTLY:
+ * the string is ignored, no warning is logged, and the plot renders perfectly —
+ * just with no axis label. Every figure in this app was drawn that way, so the
+ * volcano had no "log2 fold change", the module score no "module score", the
+ * enrichment bars no "gene ratio", and the PCA — where the axis label carries
+ * the percent variance, the number the figure is for — had nothing at all.
+ * Exported PNGs went into people's slide decks with bare numbers on the axes.
+ *
+ * Normalised here rather than at the twenty call sites, because a fix that has
+ * to be remembered is a fix that regresses the next time somebody adds a chart.
+ * The object form is accepted for every title Plotly has, so this is a widening
+ * conversion and never changes a spec that was already correct.
+ */
+function withTitles<T>(spec: T): T {
+  if (Array.isArray(spec)) return spec.map(withTitles) as unknown as T
+  if (!spec || typeof spec !== 'object') return spec
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(spec as Record<string, unknown>)) {
+    out[k] = k === 'title' && typeof v === 'string' ? { text: v } : withTitles(v)
+  }
+  return out as T
+}
+
 // Thin React wrapper over plotly.js-dist-min. Calls Plotly.react on prop change,
 // binds click events, purges on unmount, and offers a high-res PNG download.
 export default function Plot({ data, layout, config, className, style, onPointClick, downloadName }: PlotProps) {
@@ -22,7 +48,7 @@ export default function Plot({ data, layout, config, className, style, onPointCl
     const el = ref.current
     if (!el) return
     try {
-      Plotly.react(el, data, layout ?? {}, {
+      Plotly.react(el, withTitles(data), withTitles(layout ?? {}), {
         responsive: true,
         displaylogo: false,
         modeBarButtonsToRemove: ['lasso2d', 'select2d'],

@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
-import { defaultSelection } from './lib/design'
-import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
+import { countSignificant, runDESeq2 } from './lib/deseq'
+import { auditBundle, defaultComparison, listComparisons } from './lib/contrast'
+import ComparisonBar from './components/ComparisonBar'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import { embeddedCollection, useLibrary } from './lib/genesets'
@@ -37,19 +38,37 @@ export default function App() {
   const [bundle, setBundle] = useState<Bundle | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [contrastId, setContrastId] = useState<string>('')
+  /**
+   * THE comparison. One id, and everything about what is being tested derives
+   * from it — see lib/contrast.ts for what this replaced.
+   */
+  const [comparisonId, setComparisonId] = useState<string>('')
   const [tab, setTab] = useState<Tab>('overview')
   const [gene, setGene] = useState<string | null>(null)
   // Held here, not in the tab, so switching tabs or comparisons never discards
   // a typed gene list.
   const [geneText, setGeneText] = useState('')
-  const [sel, setSel] = useState<GroupSel>({ control: '', groups: [] })
-  // Which selected arm the DEG statistics describe (control is the reference).
-  const [focus, setFocus] = useState<string>('')
+  /**
+   * Arms drawn in the per-sample views BEYOND the compared pair.
+   *
+   * Display only. This is what is left of the old `sel` once it stopped being
+   * able to decide what was tested: the pair's own two groups are always drawn
+   * and are not in here.
+   */
+  const [extras, setExtras] = useState<string[]>([])
   // DESeq2 results computed this session, keyed by "<numerator>|<denominator>".
   const [computed, setComputed] = useState<Record<string, DEGRow[]>>({})
-  const [running, setRunning] = useState(false)
-  const [runLog, setRunLog] = useState<string>('')
+  /**
+   * The run, and which pair it belongs to.
+   *
+   * `runLog` used to be one string for the whole app and was never cleared, so
+   * a failure on one pair rendered underneath a successful result for another —
+   * visible in the report that prompted this as a red "needs at least 2
+   * replicates" under a green "1 DEGs · from your pipeline". Keyed by pair now,
+   * and read only when it matches the comparison on screen.
+   */
+  const [run, setRun] = useState<{ pair: string; running: boolean; log: string }>(
+    { pair: '', running: false, log: '' })
   const [showHelp, setShowHelp] = useState(false)
   const [showStart, setShowStart] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -58,34 +77,29 @@ export default function App() {
 
   const adopt = useCallback((b: Bundle) => {
     setBundle(b)
-    const first = b.meta.contrasts[0]
-    setContrastId(first?.id ?? '')
-    const s = defaultSelection(b.meta, first)
-    setSel(s)
-    setFocus(first?.numerator ?? s.groups[0] ?? '')
+    // The comparison is chosen from what the bundle can actually offer, not
+    // from meta.contrasts[0] alone — a bundle that exported no contrast at all
+    // still opens on a pair it could compute rather than on nothing.
+    setComparisonId(defaultComparison(listComparisons(b))?.id ?? '')
+    setExtras([])
+    setRun({ pair: '', running: false, log: '' })
     setGene(null)
     setGeneText('')
     setTab('overview')
     setError(null)
   }, [])
 
-  // Switching contrast moves the reference and the focus arm with it.
-  const pickContrast = (id: string) => {
-    setContrastId(id)
-    const c = bundle?.meta.contrasts.find(x => x.id === id)
-    if (!c) return
-    setSel(s => ({
-      control: c.denominator,
-      groups: s.groups.includes(c.numerator)
-        ? s.groups.filter(g => g !== c.denominator)
-        : [...s.groups.filter(g => g !== c.denominator), c.numerator],
-    }))
-    setFocus(c.numerator)
-  }
-
-  const pickSel = (next: GroupSel) => {
-    setSel(next)
-    if (!next.groups.includes(focus)) setFocus(next.groups[0] ?? '')
+  /**
+   * Choosing a comparison is one assignment.
+   *
+   * Everything else — the reference, the arm on top, which DEG table the tabs
+   * read, what the header says — is derived from it below. There is nothing
+   * here that can fall out of step, because there is nothing else to write.
+   */
+  const pickComparison = (id: string) => {
+    setComparisonId(id)
+    // A stale failure belongs to the pair it happened on.
+    setRun(r => (r.running ? r : { pair: '', running: false, log: '' }))
   }
 
   // Deliberately NOT auto-loaded: a dataset already on screen at first paint
@@ -122,45 +136,71 @@ export default function App() {
 
   const pickGene = (g: string) => { setGene(g); setTab('expression') }
 
-  /* The comparison every tab reports on.
+  /* Every comparison this bundle can offer, and the one on screen.
    *
-   * Either the pipeline's own contrast, or a DESeq2 run performed here for a
-   * pair it never exported. Computed results are spliced into a derived bundle
-   * under a synthetic id, so every tab keeps reading degByContrast[id] and needs
-   * no knowledge of where the numbers came from. Both paths are DESeq2. */
-  const active = useMemo(() => {
-    if (!bundle) return null
-    const pre = bundle.meta.contrasts.find(c => c.denominator === sel.control && c.numerator === focus)
-    if (pre) return { bundle, contrast: pre, computed: false }
+   * Both derived. `comparisons` is rebuilt when a DESeq2 run lands, so a pair
+   * moves from "can be computed" to "computed here" without anything else being
+   * told about it. */
+  const comparisons = useMemo(
+    () => (bundle ? listComparisons(bundle, computed) : []),
+    [bundle, computed])
+  const comparison = useMemo(
+    () => comparisons.find(c => c.id === comparisonId) ?? defaultComparison(comparisons),
+    [comparisons, comparisonId])
 
-    const rows = focus && sel.control ? computed[`${focus}|${sel.control}`] : undefined
-    if (rows) {
-      const id = computedContrastId(focus, sel.control)
+  /* What the bundle got wrong, said once at the top rather than discovered as
+   * an empty plot four tabs away. */
+  const problems = useMemo(() => (bundle ? auditBundle(bundle) : []), [bundle])
+
+  /* The contrast the tabs read, and the bundle they read it from.
+   *
+   * Either the pipeline's own table, or a DESeq2 run performed here for a pair
+   * it never exported. A computed result is spliced into a derived bundle under
+   * a synthetic id, so every tab keeps reading degByContrast[id] and needs no
+   * knowledge of where the numbers came from. Both paths are DESeq2. */
+  const active = useMemo(() => {
+    if (!bundle || !comparison) return null
+    const rows = computed[`${comparison.numerator}|${comparison.denominator}`]
+    const inBundle = bundle.degByContrast[comparison.id]
+
+    const contrast: Contrast = bundle.meta.contrasts.find(c => c.id === comparison.id) ?? {
+      id: comparison.id,
+      numerator: comparison.numerator,
+      denominator: comparison.denominator,
+      label: comparison.label,
+      deg_file: '',
+      n_deg: rows ? countSignificant(rows) : undefined,
+    }
+
+    if (rows && !inBundle?.length) {
       return {
-        bundle: { ...bundle, degByContrast: { ...bundle.degByContrast, [id]: rows } },
-        contrast: {
-          id, numerator: focus, denominator: sel.control,
-          label: `${focus} vs ${sel.control}`, deg_file: '', n_deg: countSignificant(rows),
-        } as Contrast,
-        computed: true,
+        bundle: { ...bundle, degByContrast: { ...bundle.degByContrast, [comparison.id]: rows } },
+        contrast, pending: false,
       }
     }
     // No statistics for this pair yet. Falling back to another contrast here
     // would paint a different comparison's volcano and DEG table under this
-    // pair's label — plausible numbers belonging to another question. Return a
-    // contrast with no rows instead, and let the tabs say so.
+    // pair's label — plausible numbers belonging to another question. Return
+    // the contrast with no rows instead, and let the tabs say so.
+    return { bundle, contrast, pending: !inBundle?.length }
+  }, [bundle, comparison, computed])
+
+  /* Which arms the per-sample views draw.
+   *
+   * Derived from the comparison plus the display extras, never the other way
+   * round. A contrast whose groups are not sample conditions has no pair to
+   * pin, so it falls back to the bundle's own reference — the per-sample tabs
+   * say plainly that they are not showing that contrast. */
+  const sel = useMemo<GroupSel>(() => {
+    if (!bundle) return { control: '', groups: [] }
+    const pinnedOk = comparison?.groupsAreConditions
+    const control = pinnedOk ? comparison.denominator : bundle.meta.control
+    const first = pinnedOk ? [comparison.numerator] : []
     return {
-      bundle,
-      contrast: {
-        id: `~pending:${focus}_vs_${sel.control}`,
-        numerator: focus, denominator: sel.control,
-        label: focus && sel.control ? `${focus} vs ${sel.control}` : 'no comparison selected',
-        deg_file: '',
-      } as Contrast,
-      computed: false,
-      pending: true,
+      control,
+      groups: [...first, ...extras.filter(g => g !== control && !first.includes(g))],
     }
-  }, [bundle, sel.control, focus, computed])
+  }, [bundle, comparison, extras])
 
   /* The gene-set library, owned here rather than by a tab.
    *
@@ -184,17 +224,21 @@ export default function App() {
 
   /** DESeq2 for the current pair, on explicit request — it is a real analysis. */
   const runPair = async () => {
-    if (!bundle?.rawCounts || !focus || !sel.control) return
-    setRunning(true); setRunLog('')
-    const log = (m: string) => setRunLog(m)
+    // Guarded on the comparison's own verdict rather than re-deriving one here.
+    // The button is not offered for anything else, and the check that decides
+    // that lives in one place — see listComparisons.
+    if (!bundle?.rawCounts || comparison?.source !== 'computable') return
+    const { numerator, denominator } = comparison
+    const pair = `${numerator}|${denominator}`
+    setRun({ pair, running: true, log: '' })
+    const log = (m: string) => setRun(r => (r.pair === pair ? { ...r, log: m } : r))
     try {
       const rows = await runDESeq2(
-        { raw: bundle.rawCounts, samples: bundle.samples, numerator: focus, denominator: sel.control }, log)
-      setComputed(c => ({ ...c, [`${focus}|${sel.control}`]: rows }))
+        { raw: bundle.rawCounts, samples: bundle.samples, numerator, denominator }, log)
+      setComputed(c => ({ ...c, [pair]: rows }))
+      setRun(r => (r.pair === pair ? { pair, running: false, log: '' } : r))
     } catch (e: any) {
-      setRunLog(`Failed: ${e?.message || e}`)
-    } finally {
-      setRunning(false)
+      setRun(r => (r.pair === pair ? { pair, running: false, log: `Failed: ${e?.message || e}` } : r))
     }
   }
 
@@ -202,6 +246,9 @@ export default function App() {
   const contrast = active?.contrast
   // True when the selected pair has no DESeq2 result yet.
   const pending = !!active?.pending
+  /** The run's own pair, so one pair's failure never renders under another. */
+  const myRun = comparison && run.pair === `${comparison.numerator}|${comparison.denominator}`
+    ? run : { running: false, log: '' }
 
   return (
     <div className="relative mx-auto flex min-h-full max-w-6xl flex-col px-4"
@@ -223,12 +270,11 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* On the landing screen the actions live in the hero, not up here. */}
-          {bundle && bundle.meta.contrasts.length > 1 && (
-            <select className="input" value={contrastId} onChange={e => pickContrast(e.target.value)}>
-              {bundle.meta.contrasts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-          )}
+          {/* The contrast select that used to sit here is gone. It held its own
+              state, the tabs derived theirs from elsewhere, and nothing kept
+              the two in step — so the header could name one comparison over
+              another one's numbers. There is one selector now, in the bar
+              below, where the rest of the comparison's context is. */}
           {bundle && (
             <>
               <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
@@ -258,14 +304,30 @@ export default function App() {
         </div>
       )}
 
-      {/* Only worth showing when there is something to choose between. */}
-      {bundle && contrast && bundle.meta.conditions.length > 2 && (
-        <GroupBar
-          bundle={bundle} contrast={contrast} sel={sel} focus={focus}
-          computed={!!active?.computed} running={running} runLog={runLog}
-          hasPair={!!(focus && bundle.meta.contrasts.some(c => c.denominator === sel.control && c.numerator === focus))
-            || !!computed[`${focus}|${sel.control}`]}
-          onChange={pickSel} onFocus={setFocus} onRun={runPair} />
+      {/* Always shown, on every bundle.
+          It used to be hidden unless there were more than two conditions, which
+          meant the commonest bulk design of all — one treatment, one control —
+          had no way to see which pair was being tested, and no way to reach the
+          DESeq2 run button at all. Two conditions is exactly one comparison,
+          and saying which one it is is not clutter. */}
+      {bundle && comparison && (
+        <ComparisonBar
+          bundle={bundle} comparisons={comparisons} current={comparison}
+          extras={extras} running={myRun.running} runLog={myRun.log}
+          onPick={pickComparison} onExtras={setExtras} onRun={runPair} />
+      )}
+
+      {/* What is wrong with the bundle, once, where it is read — not as an
+          empty plot four tabs away. */}
+      {bundle && problems.length > 0 && (
+        <details className="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/40 dark:bg-amber-500/10">
+          <summary className="cursor-pointer font-medium text-amber-900 dark:text-amber-200">
+            {problems.length} thing{problems.length === 1 ? '' : 's'} to know about this bundle
+          </summary>
+          <ul className="mt-2 space-y-1.5 text-amber-900/90 dark:text-amber-200/90">
+            {problems.map((p, i) => <li key={i} className="text-xs leading-relaxed">{p.text}</li>)}
+          </ul>
+        </details>
       )}
 
       {bundle && (
@@ -297,7 +359,7 @@ export default function App() {
         )}
         {!loading && bundle && contrast && (
           <ErrorBoundary key={tab}>
-            {tab === 'overview' && <Overview bundle={viewBundle!} />}
+            {tab === 'overview' && <Overview bundle={viewBundle!} sel={sel} />}
             {/* Expression needs no statistics, so it stays available while a pair
                 is uncomputed; its DEG-derived panels hide themselves. */}
             {tab === 'expression' && (
@@ -310,8 +372,8 @@ export default function App() {
                 anything at all would be showing another comparison's numbers. */}
             {tab !== 'overview' && tab !== 'expression' && pending && (
               <NeedsStats
-                contrast={contrast} canCompute={!!bundle.rawCounts} running={running}
-                runLog={runLog} onRun={runPair} />
+                contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}
+                runLog={myRun.log} onRun={runPair} />
             )}
             {!pending && (
               <>
@@ -382,132 +444,6 @@ function NeedsStats({ contrast, canCompute, running, runLog, onRun }: {
           raw counts, so a normalized matrix cannot stand in. Or pick a pair your pipeline exported.
         </p>
       )}
-    </div>
-  )
-}
-
-/**
- * Choose the reference group and which arms to look at. One selection, read by
- * every expression view, so a 23-arm design can be narrowed to the three arms a
- * given question is about.
- */
-function GroupBar({
-  bundle, contrast, sel, focus, computed, running, runLog, hasPair, onChange, onFocus, onRun,
-}: {
-  bundle: Bundle; contrast: Contrast; sel: GroupSel; focus: string
-  computed: boolean; running: boolean; runLog: string; hasPair: boolean
-  onChange: (s: GroupSel) => void; onFocus: (g: string) => void; onRun: () => void
-}) {
-  const canCompute = !!bundle.rawCounts
-  const all = bundle.meta.conditions
-  const nSamples = (c: string) => bundle.samples.filter(s => s.condition === c).length
-
-  const toggle = (c: string) => onChange({
-    ...sel,
-    groups: sel.groups.includes(c) ? sel.groups.filter(g => g !== c) : [...sel.groups, c],
-  })
-
-  return (
-    <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/50">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Control</span>
-          <select
-            className="input py-1" value={sel.control}
-            onChange={e => onChange({
-              control: e.target.value,
-              groups: sel.groups.filter(g => g !== e.target.value),
-            })}
-          >
-            {all.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-
-        <div className="ml-auto flex items-center gap-1.5">
-          <button className="btn py-1 text-xs"
-            onClick={() => onChange({ control: sel.control, groups: all.filter(c => c !== sel.control) })}>
-            Select all
-          </button>
-          <button className="btn py-1 text-xs"
-            onClick={() => onChange({ control: sel.control, groups: [] })}>
-            Remove all
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Compare</span>
-        {all.filter(c => c !== sel.control).map(c => {
-          const on = sel.groups.includes(c)
-          const testable = bundle.meta.contrasts.some(x => x.denominator === sel.control && x.numerator === c)
-          return (
-            <button
-              key={c}
-              onClick={() => toggle(c)}
-              title={`${nSamples(c)} samples · ${testable ? 'has a contrast against ' + sel.control : 'no contrast against ' + sel.control}`}
-              className={`pressable rounded-md border px-2 py-0.5 text-xs transition ${
-                on
-                  ? 'border-indigo-400 bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
-                  : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-slate-700'}`}
-            >{c}{testable && <span className="ml-1 opacity-60" aria-hidden="true">•</span>}</button>
-          )
-        })}
-      </div>
-
-      {/* Which pair the DEG statistics describe. Precomputed when the pipeline
-          exported it, otherwise DESeq2 is run here on the raw counts. */}
-      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2 dark:border-slate-700">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Statistics for
-        </span>
-        {sel.groups.length === 0 ? (
-          <span className="text-xs text-slate-400">select an arm to compare against {sel.control}</span>
-        ) : (
-          <>
-            <select className="input py-1 text-sm" value={focus} onChange={e => onFocus(e.target.value)}>
-              {sel.groups.map(g => <option key={g} value={g}>{g} vs {sel.control}</option>)}
-            </select>
-
-            {hasPair ? (
-              <>
-                <span className={`pill ${computed
-                  ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-200'
-                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200'}`}>
-                  DESeq2 · {computed ? 'run here' : 'from your pipeline'}
-                </span>
-                {typeof contrast.n_deg === 'number' && (
-                  <span className="text-xs text-slate-500">
-                    {contrast.n_deg.toLocaleString()} DEGs · padj &lt; 0.05, |log2FC| ≥ 1
-                  </span>
-                )}
-              </>
-            ) : canCompute ? (
-              <>
-                <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
-                  {running ? 'Running DESeq2…' : 'Run DESeq2 for this pair'}
-                </button>
-                <span className="text-xs text-slate-400">
-                  {running ? runLog : 'not exported by your pipeline — runs in your browser (R + DESeq2)'}
-                </span>
-              </>
-            ) : (
-              <span className="text-xs text-amber-600 dark:text-amber-400">
-                not exported by your pipeline, and this bundle has no <code>raw_counts.csv</code> —
-                DESeq2 needs raw counts, so this pair cannot be tested here.
-              </span>
-            )}
-            {!running && runLog.startsWith('Failed') && (
-              <span className="text-xs text-red-500">{runLog}</span>
-            )}
-          </>
-        )}
-      </div>
-
-      <p className="mt-2 text-xs text-slate-400">
-        <b>{sel.groups.length + 1}</b> of {all.length} groups shown, against <b>{sel.control}</b> —
-        applies to gene expression, gene sets and the heatmap.
-        {computed && ' This pair was not in the bundle, so DESeq2 was run here on the raw counts — the same method, so the numbers are comparable with the exported contrasts.'}
-      </p>
     </div>
   )
 }

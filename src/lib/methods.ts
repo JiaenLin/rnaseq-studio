@@ -49,12 +49,25 @@ export interface SetParams {
   direction: 'both' | 'up' | 'down'
 }
 
+export interface PcaParams {
+  /** Genes entering the decomposition — DESeq2's ntop. */
+  ntop: number
+  /** How many actually entered, which is ntop capped by the genes that vary. */
+  nGenes: number
+  nSamples: number
+  pcX: number
+  pcY: number
+  varX: number
+  varY: number
+}
+
 export interface MethodsState {
   de: DeParams
   ora: OraParams | null
   sets: SetParams | null
+  pca: PcaParams | null
   /** Which tabs have actually been opened — an unopened tab is still at defaults. */
-  seen: Record<'de' | 'ora' | 'sets', boolean>
+  seen: Record<'de' | 'ora' | 'sets' | 'pca', boolean>
 }
 
 // Defaults mirror each component's initial state, so the text is complete even
@@ -63,7 +76,8 @@ let state: MethodsState = {
   de: { padjThr: 0.05, lfcThr: 1 },
   ora: null,
   sets: null,
-  seen: { de: false, ora: false, sets: false },
+  pca: null,
+  seen: { de: false, ora: false, sets: false, pca: false },
 }
 
 const listeners = new Set<() => void>()
@@ -77,6 +91,11 @@ export function reportDe(p: DeParams) {
 export function reportOra(p: OraParams) {
   if (state.ora && shallowEq(state.ora, p)) return
   state = { ...state, ora: p, seen: { ...state.seen, ora: true } }
+  emit()
+}
+export function reportPca(p: PcaParams) {
+  if (state.pca && shallowEq(state.pca, p)) return
+  state = { ...state, pca: p, seen: { ...state.seen, pca: true } }
   emit()
 }
 export function reportSets(p: SetParams) {
@@ -236,7 +255,7 @@ const SCORE_TEXT: Record<SetParams['scoreMethod'], string> = {
   meanz: 'the mean z-score of set members across samples',
 }
 
-export type AnalysisId = 'de' | 'ora' | 'sets' | 'ranking'
+export type AnalysisId = 'de' | 'pca' | 'ora' | 'sets' | 'ranking'
 export type CiteStyle = 'numbered' | 'authoryear'
 
 export interface MethodsDoc {
@@ -297,6 +316,17 @@ export function buildDoc(
   }
 
   /* Over-representation analysis */
+  /* Sample-level structure, before any gene. */
+  if (include.has('pca') && s.pca) {
+    const p = s.pca
+    sentences.push(
+      `Sample-level structure was inspected by principal component analysis of the ` +
+      `${fmtN(p.nGenes)} most variable genes on log2(normalized counts + 1), with genes centred ` +
+      `and not scaled; PC${p.pcX} and PC${p.pcY} accounted for ${(p.varX * 100).toFixed(1)}% and ` +
+      `${(p.varY * 100).toFixed(1)}% of the variance across ${fmtN(p.nSamples)} samples.`)
+    if (!s.seen.pca) unseen.push('PCA')
+  }
+
   if (include.has('ora') && s.ora) {
     const o = s.ora
     const named = o.sources.map(src => {

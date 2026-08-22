@@ -10,6 +10,7 @@ interface Props {
 
 const ANALYSES: { id: AnalysisId; label: string }[] = [
   { id: 'de', label: 'Differential expression' },
+  { id: 'pca', label: 'Sample PCA' },
   { id: 'ora', label: 'Enrichment' },
   { id: 'sets', label: 'Gene-set activity' },
   { id: 'ranking', label: 'Combined-score ranking' },
@@ -18,7 +19,7 @@ const ANALYSES: { id: AnalysisId; label: string }[] = [
 export default function Methods({ bundle, contrast }: Props) {
   const state = useMethodsState()
   // Combined-score ranking is off unless the manuscript reports that ranking.
-  const [include, setInclude] = useState<Set<AnalysisId>>(new Set(['de', 'ora', 'sets']))
+  const [include, setInclude] = useState<Set<AnalysisId>>(new Set(['de', 'pca', 'ora', 'sets']))
   const [style, setStyle] = useState<CiteStyle>('numbered')
   const [title, setTitle] = useState(DEFAULT_TITLE)
   const [copied, setCopied] = useState(false)
