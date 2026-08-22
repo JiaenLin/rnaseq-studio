@@ -6,7 +6,7 @@
 // matched meta.conditions and those samples vanished from every plot without
 // any error. Identifiers must stay text; only numeric columns get coerced.
 import { assemble } from '../src/lib/bundle.ts'
-import { defaultSelection, displayOrder, orderSamples } from '../src/lib/design.ts'
+import { defaultSelection, displayOrder, orderSamples, samplesInGroups } from '../src/lib/design.ts'
 import { computedContrastId, countSignificant, isComputedContrast } from '../src/lib/deseq.ts'
 
 let failed = 0
@@ -78,12 +78,17 @@ console.log('\nGROUP SELECTION')
 {
   const meta = bundle.meta
   const def = defaultSelection(meta, meta.contrasts[0])
-  check('default reference is the contrast denominator', def.control, '517E2')
-  check('default shows every other group', def.groups.length, CONDITIONS.length - 1)
+  // Both sides are lists now: either may hold several groups, which is how a
+  // pooled main effect is asked for on a factorial design.
+  check('default reference is the contrast denominator', def.control, ['517E2'])
+  check('default compares the contrast numerator', def.test, [meta.contrasts[0].numerator])
+  check('every other group is still drawn',
+    displayOrder(def).length, CONDITIONS.length)
   check('control is drawn first', displayOrder(def)[0], '517E2')
-  check('control never repeats in the group list', displayOrder(def).filter(c => c === '517E2').length, 1)
+  check('no group is drawn twice',
+    new Set(displayOrder(def)).size, displayOrder(def).length)
 
-  const narrow = { control: '517E2', groups: ['517E2+RSL3'] }
+  const narrow = { control: ['517E2'], test: ['517E2+RSL3'], extra: [], excluded: [] }
   const shown = orderSamples(bundle.counts.samples, bundle.samples, narrow)
   check('narrowing drops unselected samples', shown.length, 4)      // 2 groups x 2 reps
   check('samples come back control-first',
@@ -91,15 +96,30 @@ console.log('\nGROUP SELECTION')
   check('every returned col indexes the counts matrix',
     shown.every(s => s.col >= 0 && s.col < bundle.counts.samples.length), true)
 
+  // An excluded sample is gone from every per-sample view, which all resolve
+  // their samples through orderSamples.
+  const dropped = shown[0].sample
+  const minusOne = orderSamples(bundle.counts.samples, bundle.samples,
+    { ...narrow, excluded: [dropped] })
+  check('an excluded sample is dropped', minusOne.length, shown.length - 1)
+  check('and it is the right one', minusOne.some(s => s.sample === dropped), false)
+
+  // Pooling both sides: the samples of two groups, as one side.
+  const pooled = samplesInGroups(bundle.counts.samples, bundle.samples,
+    ['517E2', '517E2+RSL3'], [])
+  check('a pooled side gathers both groups', pooled.length, 4)
+  check('and honours exclusions',
+    samplesInGroups(bundle.counts.samples, bundle.samples,
+      ['517E2', '517E2+RSL3'], [pooled[0]]).length, 3)
 }
 
 console.log('\nDESeq2 CONTRAST HELPERS')
 {
   check('computed contrast ids are marked',
-    isComputedContrast(computedContrastId('a', 'b')), true)
+    isComputedContrast(computedContrastId(['a'], ['b'])), true)
   check('pipeline contrast ids are not', isComputedContrast('a_vs_b'), false)
   check('the id carries both group names',
-    computedContrastId('517E2+RSL3', '517E2'), '~deseq2:517E2+RSL3_vs_517E2')
+    computedContrastId(['517E2+RSL3'], ['517E2']), '~deseq2:517E2+RSL3_vs_517E2')
 
   const rows = [
     { gene_id: 'A', gene_name: 'A', baseMean: 10, log2FoldChange: 2.5, lfcSE: null, pvalue: 1e-6, padj: 1e-4 },

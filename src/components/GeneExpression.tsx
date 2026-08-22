@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import type { GroupSel } from '../lib/design'
-import { displayOrder, orderSamples } from '../lib/design'
+import { displayOrder, orderSamples, poolValues } from '../lib/design'
 import { conditionColors, SIG_COLORS, contrastTitle } from '../lib/palette'
 import { combinedScore, mean, welchP, zscore } from '../lib/stats'
 import Plot from '../lib/Plot'
@@ -171,7 +171,7 @@ export default function GeneExpression({
     const order = displayOrder(sel).filter(c => byCond[c]?.length)
     // Same relative transform as the per-gene panel: every sample ÷ the control
     // mean, so the control group averages exactly 1.
-    const ctrlMean = mean(byCond[sel.control] ?? [])
+    const ctrlMean = mean(poolValues(byCond, sel.control))
     const toY = (v: number) =>
       relative ? (ctrlMean > 0 ? v / ctrlMean : NaN) : (log2 ? Math.log2(v + 1) : v)
     const traces = order.map(c => ({
@@ -258,8 +258,8 @@ export default function GeneExpression({
   if (zAll.length) for (let j = 0; j < S; j++) { let s = 0; for (const z of zAll) s += z[j]; moduleByCol[j] = s / zAll.length }
   const moduleByCond: Record<string, number[]> = {}
   ordered.forEach(o => { (moduleByCond[o.cond] ||= []).push(moduleByCol[o.col]) })
-  const denScores = moduleByCond[sel.control] || []
-  const numScores = moduleByCond[contrast.numerator] || []
+  const denScores = poolValues(moduleByCond, sel.control)
+  const numScores = poolValues(moduleByCond, sel.test)
   const moduleStat = denScores.length >= 2 && numScores.length >= 2 ? welchP(denScores, numScores) : null
   const moduleTraces = displayOrder(sel).filter(c => moduleByCond[c]?.length).map(c => ({
     type: 'box', name: c, y: moduleByCond[c], boxpoints: 'all', jitter: 0.5, pointpos: 0, boxmean: true,
@@ -297,7 +297,7 @@ export default function GeneExpression({
     const byC: Record<string, number[]> = {}
     ordered.forEach(o => { (byC[o.cond] ||= []).push(vals[o.col]) })
     // Reference = the contrast's denominator (the control group).
-    const ctrlMean = mean(byC[sel.control] ?? [])
+    const ctrlMean = mean(poolValues(byC, sel.control))
     // A gene with no expression in the control has no meaningful fold change;
     // NaN leaves that panel empty rather than drawing an Infinity spike.
     const toY = (v: number) =>

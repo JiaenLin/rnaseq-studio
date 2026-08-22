@@ -72,25 +72,56 @@ const DESEQ_R = `local({
 export interface DeseqRequest {
   raw: CountsMatrix
   samples: SampleRow[]
-  numerator: string
-  denominator: string
+  /** Groups on top of the ratio. More than one is pooled into a single level. */
+  numerator: string[]
+  /** Reference groups. More than one is pooled. */
+  denominator: string[]
+  /** Sample names the reader has taken out of the analysis. */
+  excluded?: readonly string[]
 }
 
-/** Run DESeq2 for one pair. Only the two groups' samples are sent to R. */
+/**
+ * Run DESeq2 for one comparison. Only the selected samples are sent to R.
+ *
+ * Each side may name several groups, and when it does they are POOLED into one
+ * level rather than modelled separately. On a 2×2 that is how the main effect is
+ * asked for — {KO_Cold, KO_Thermo} against {Ctrl_Cold, Ctrl_Thermo} is the
+ * genotype effect across both temperatures, and no pairwise contrast between the
+ * four cells answers it.
+ *
+ * Pooling is the right model here and is also a claim worth being honest about:
+ * it treats the temperatures as replicates of a genotype, so it has more power
+ * than either pairwise contrast and it will miss an effect that runs in opposite
+ * directions in the two. That is what an interaction term is for, and this app
+ * does not fit one — the bundle's own exporter does.
+ */
 export async function runDESeq2(
-  { raw, samples, numerator, denominator }: DeseqRequest,
+  { raw, samples, numerator, denominator, excluded = [] }: DeseqRequest,
   log: (m: string) => void,
 ): Promise<DEGRow[]> {
   const cond: Record<string, string> = {}
   for (const s of samples) cond[s.sample] = s.condition
+  // Not `num` — that is the module-level number parser below, and shadowing it
+  // inside the one function that also calls parseDegCsv is a trap for later.
+  const numSet = new Set(numerator)
+  const denSet = new Set(denominator)
+  const out = new Set(excluded)
+
+  // The pooled level, not the group name: R sees two conditions whatever the
+  // reader selected, so the model formula and the results() call never have to
+  // know how many groups went into each side.
   const cols = raw.samples
     .map((s, j) => ({ s, j, c: cond[s] ?? '' }))
-    .filter(x => x.c === numerator || x.c === denominator)
+    .filter(x => !out.has(x.s))
+    .map(x => ({ ...x, side: numSet.has(x.c) ? 'TEST' : denSet.has(x.c) ? 'CTRL' : '' }))
+    .filter(x => x.side)
 
-  const nNum = cols.filter(x => x.c === numerator).length
-  const nDen = cols.filter(x => x.c === denominator).length
+  const nNum = cols.filter(x => x.side === 'TEST').length
+  const nDen = cols.filter(x => x.side === 'CTRL').length
+  const nameNum = numerator.join(' + ') || '(nothing)'
+  const nameDen = denominator.join(' + ') || '(nothing)'
   if (nNum < 2 || nDen < 2)
-    throw new Error(`DESeq2 needs at least 2 replicates per group (${numerator}: ${nNum}, ${denominator}: ${nDen}).`)
+    throw new Error(`DESeq2 needs at least 2 replicates per side (${nameNum}: ${nNum}, ${nameDen}: ${nDen}).`)
 
   const webR = await getWebR(log)
   await ensureDESeq2(webR, log)
@@ -108,15 +139,15 @@ export async function runDESeq2(
     lines[i + 1] = cells.join(',')
   }
   const coldata = 'sample,condition\n' +
-    cols.map(c => `${JSON.stringify(c.s)},${JSON.stringify(c.c)}`).join('\n') + '\n'
+    cols.map(c => `${JSON.stringify(c.s)},${JSON.stringify(c.side)}`).join('\n') + '\n'
 
   try { await webR.FS.mkdir('/work') } catch { /* exists */ }
   const enc = new TextEncoder()
   await webR.FS.writeFile('/work/counts.csv', enc.encode(lines.join('\n') + '\n'))
   await webR.FS.writeFile('/work/coldata.csv', enc.encode(coldata))
 
-  log(`Running DESeq2 — ${numerator} (n=${nNum}) vs ${denominator} (n=${nDen})…`)
-  const nDeg = await webR.evalRString(DESEQ_R.replace('__REF__', JSON.stringify(denominator)))
+  log(`Running DESeq2 — ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
+  const nDeg = await webR.evalRString(DESEQ_R.replace('__REF__', JSON.stringify('CTRL')))
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
   log(`Done — ${nDeg} genes at padj < 0.05.`)
   return parseDegCsv(csv)
@@ -148,8 +179,18 @@ function parseDegCsv(text: string): DEGRow[] {
   return out
 }
 
-export const computedContrastId = (numerator: string, denominator: string) =>
-  `~deseq2:${numerator}_vs_${denominator}`
+/**
+ * The id a run performed here is filed under.
+ *
+ * `.join` directly, never `[...xs].join`. Spreading accepts a bare string and
+ * turns it into its characters, so a caller that had not been updated from the
+ * old single-group signature produced `~deseq2:5+1+7+E+2_vs_...` — a valid
+ * string, a plausible-looking id, and a key nothing else would ever match.
+ * `.join` on a string throws, which is what a caller passing the wrong type
+ * deserves.
+ */
+export const computedContrastId = (numerator: readonly string[], denominator: readonly string[]) =>
+  `~deseq2:${numerator.join('+')}_vs_${denominator.join('+')}`
 
 export const isComputedContrast = (id: string) => id.startsWith('~deseq2:')
 

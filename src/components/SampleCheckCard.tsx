@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Bundle } from '../types'
+import type { GroupSel } from '../lib/design'
 import { conditionColors } from '../lib/palette'
 import { checkSamples, MIN_SEPARATION } from '../lib/samplecheck'
 import Plot from '../lib/Plot'
@@ -20,7 +21,7 @@ import Plot from '../lib/Plot'
  * is the thing that turns "the PCA looks wrong" into a checkable claim about one
  * tube.
  */
-export default function SampleCheckCard({ bundle }: { bundle: Bundle }) {
+export default function SampleCheckCard({ bundle, sel }: { bundle: Bundle; sel: GroupSel }) {
   const { counts, samples, meta } = bundle
   const [ntop, setNtop] = useState(500)
   const [showMatrix, setShowMatrix] = useState(false)
@@ -40,11 +41,16 @@ export default function SampleCheckCard({ bundle }: { bundle: Bundle }) {
    */
   const ordered = useMemo(() => {
     const rank = new Map(meta.conditions.map((c, i) => [c, i] as const))
+    const dropped = new Set(sel.excluded)
     return counts.samples
-      .map((name, j) => ({ name, j, g: cond.get(name) ?? '—' }))
+      .filter(name => !dropped.has(name))
+      // The column index is looked up rather than taken from the map callback:
+      // the filter above has already shifted the positions, and `j` has to index
+      // the ORIGINAL matrix.
+      .map(name => ({ name, j: counts.samples.indexOf(name), g: cond.get(name) ?? '—' }))
       .sort((a, b) =>
         (rank.get(a.g) ?? 999) - (rank.get(b.g) ?? 999) || a.name.localeCompare(b.name))
-  }, [counts.samples, cond, meta.conditions])
+  }, [counts.samples, cond, meta.conditions, sel.excluded])
 
   const result = useMemo(
     () => checkSamples(

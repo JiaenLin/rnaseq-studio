@@ -2,15 +2,17 @@ import type { Bundle } from '../types'
 import type { GroupSel } from '../lib/design'
 import PCAPlot from './PCAPlot'
 import SampleCheckCard from './SampleCheckCard'
+import SamplePicker from './SamplePicker'
 
 interface Props {
   bundle: Bundle
   sel: GroupSel
+  onSel: (next: GroupSel) => void
 }
 
 // Contrasts are chosen in the comparison bar above the tabs, so this no longer
 // lists them — it describes the dataset.
-export default function Overview({ bundle, sel }: Props) {
+export default function Overview({ bundle, sel, onSel }: Props) {
   const { meta, samples, counts } = bundle
 
   return (
@@ -22,6 +24,10 @@ export default function Overview({ bundle, sel }: Props) {
         <Metric label="Reference / control" value={meta.control} sub={`engine: ${meta.engine}`} />
       </div>
 
+      {/* Which samples take part at all — above the figures, because it changes
+          what they are drawn from. */}
+      <SamplePicker bundle={bundle} sel={sel} onSel={onSel} />
+
       {/* Before any gene: where the samples sit relative to each other. On the
           Overview because it describes the DATASET rather than a contrast —
           which also means it is available before any pair has statistics. */}
@@ -29,7 +35,7 @@ export default function Overview({ bundle, sel }: Props) {
 
       {/* The question a PCA raises but cannot answer: when the groups do not
           separate, is that the labels or the effect size? */}
-      <SampleCheckCard bundle={bundle} />
+      <SampleCheckCard bundle={bundle} sel={sel} />
 
       <div className="card p-4">
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Samples</h3>

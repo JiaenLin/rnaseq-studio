@@ -5,7 +5,7 @@
 // advertising more replicates than the matrix holds, a pair offered for a
 // DESeq2 run that could never have enough replicates.
 
-import { auditBundle, conditionSizes, defaultComparison, listComparisons } from '../src/lib/contrast.ts'
+import { auditBundle, comparisonState, conditionSizes, matchPrecomputed } from '../src/lib/contrast.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -37,8 +37,7 @@ console.log('\nTHE SCREENSHOT, AS A TEST')
 {
   // A schema-v1 bundle with no `kind` at all, whose pipeline named its
   // contrasts after model coefficients. Nothing declares what these are, so the
-  // mismatch with samples.csv is the only evidence there is — and it is a real
-  // defect worth reporting, unlike a declared interaction.
+  // mismatch with samples.csv is the only evidence there is.
   const b = mk({
     conditions: ['Ctrl_Cold', 'Ctrl_Thermo', 'KO_Cold', 'KO_Thermo'],
     control: 'Ctrl_Cold',
@@ -47,19 +46,13 @@ console.log('\nTHE SCREENSHOT, AS A TEST')
       { id: 'c2', numerator: 'KO:Thermo', denominator: 'Ctrl:Thermo', label: 'KO vs Ctrl (at Thermo)' },
     ],
   })
-  const list = listComparisons(b)
-  const c1 = list.find(c => c.id === 'c1')
-  // The result is real and stays offered — it came out of the pipeline.
-  check('the exported contrast is still listed', c1.source, 'bundle')
-  // But it is flagged, so no view offers something it cannot deliver.
-  check('and flagged as not tied to samples', c1.groupsAreConditions, false)
-  check('with zero replicates found, honestly', [c1.nNumerator, c1.nDenominator], [0, 0])
-
-  // The real conditions are still offered as computable pairs, so the reader
-  // can get a per-sample comparison even though the pipeline's own is unusable.
-  const real = list.find(c => c.numerator === 'KO_Cold' && c.denominator === 'Ctrl_Cold')
-  check('the underlying pair is offered', real.source, 'computable')
-  check('with its real replicate counts', [real.nNumerator, real.nDenominator], [6, 6])
+  // Its groups are not conditions, so no selection the reader can make matches
+  // it — and the pair they WOULD select is offered as a run instead.
+  check('no selection matches a coefficient-named contrast',
+    matchPrecomputed(b, ['Ctrl_Cold'], ['KO_Cold']), null)
+  const st = comparisonState(b, ['Ctrl_Cold'], ['KO_Cold'], [], {})
+  check('so the real pair is computable', st.source, 'computable')
+  check('with its real replicate counts', [st.nTest, st.nControl], [6, 6])
 
   const audit = auditBundle(b)
   check('the audit names the problem', audit[0].kind, 'orphan-contrast')
@@ -69,11 +62,6 @@ console.log('\nTHE SCREENSHOT, AS A TEST')
 
 console.log('\nAN INTERACTION IS NOT A MISNAMED PAIRWISE CONTRAST')
 {
-  // rnaseq-lab writes kind:'interaction' for the coefficient asking whether one
-  // factor's effect depends on another. Its numerator is the coefficient name
-  // and its denominator is the literal "interaction" — no sample has either,
-  // BY CONSTRUCTION. Reading them as groups is what produced the reported
-  // "needs at least 2 replicates per group (KO:Thermo: 0)".
   const b = mk({
     conditions: ['Ctrl_Cold', 'Ctrl_Thermo', 'KO_Cold', 'KO_Thermo'],
     control: 'Ctrl_Cold',
@@ -83,60 +71,62 @@ console.log('\nAN INTERACTION IS NOT A MISNAMED PAIRWISE CONTRAST')
         label: 'Interaction: does the KO-vs-Ctrl effect differ between Thermo and Cold?' },
     ],
   })
-  const list = listComparisons(b)
-  const ix = list.find(c => c.id === 'ix')
-  check('the interaction is recognised as one', ix.interaction, true)
-  check('and has no groups, correctly', ix.groupsAreConditions, false)
-  const pw = list.find(c => c.id === 'p1')
-  check('the pairwise one is not', [pw.interaction, pw.groupsAreConditions], [false, true])
-
-  // And the audit stays quiet: an interaction having no groups is not a defect,
-  // and warning about it would train people to ignore the banner.
-  check('the audit does not scold a correct bundle',
+  check('the pairwise one is found by its pair', matchPrecomputed(b, ['Ctrl_Cold'], ['KO_Cold'])?.id, 'p1')
+  // An interaction can never be reached by picking two groups, which is right:
+  // it is not a comparison between two groups.
+  check('the interaction is never matched',
+    b.meta.contrasts.some(c => matchPrecomputed(b, [c.denominator], [c.numerator])?.kind === 'interaction'), false)
+  check('and the audit stays quiet about it',
     auditBundle(b).some(p => p.kind === 'orphan-contrast'), false)
 }
 
-console.log('\nEVERY PAIR IS OFFERED ONCE, CONTROL FIRST')
+console.log('\nPRECOMPUTED IS A PROPERTY OF THE ANSWER, NOT A MENU')
 {
   const b = mk({
     conditions: ['WT', 'KO', 'Rescue'],
     control: 'WT',
     contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT' }],
   })
-  const list = listComparisons(b)
-  // 3 conditions → 6 ordered pairs, one of which the pipeline exported.
-  check('six comparisons in total', list.length, 6)
-  check('the exported one comes first', [list[0].id, list[0].source], ['KO_vs_WT', 'bundle'])
-  // The exported pair must not also appear as a computable duplicate.
-  const kovswt = list.filter(c => c.numerator === 'KO' && c.denominator === 'WT')
-  check('and is not duplicated', kovswt.length, 1)
-  // Control-first ordering among the computed ones. Only one non-exported pair
-  // has WT underneath (Rescue vs WT) because KO vs WT is the exported one, so
-  // the property to assert is the GROUPING: every pair against the control,
-  // then every pair against the next arm, never interleaved.
-  const denoms = list.filter(c => c.source !== 'bundle').map(c => c.denominator)
-  check('pairs are grouped by denominator, control first',
-    denoms, ['WT', 'KO', 'KO', 'Rescue', 'Rescue'])
-  check('all six are distinct pairs',
-    new Set(list.map(c => `${c.numerator}|${c.denominator}`)).size, 6)
+  check('the exported pair reports as such',
+    comparisonState(b, ['WT'], ['KO'], [], {}).source, 'bundle')
+  // The pair the pipeline never exported is reachable all the same. That is the
+  // whole point: the exporter's choices no longer decide what can be asked.
+  check('an unexported pair is computable',
+    comparisonState(b, ['WT'], ['Rescue'], [], {}).source, 'computable')
+  check('and so is the reverse of an exported one',
+    comparisonState(b, ['KO'], ['WT'], [], {}).source, 'computable')
+  // Pooling: two groups against one is never precomputed, always a run.
+  check('a pooled side is never a bundle table',
+    comparisonState(b, ['WT'], ['KO', 'Rescue'], [], {}).source, 'computable')
+  check('and pools the replicate count', comparisonState(b, ['WT'], ['KO', 'Rescue'], [], {}).nTest, 12)
+  check('a session run is reported as run here',
+    comparisonState(b, ['WT'], ['Rescue'], [], { 'Rescue|WT': [] }).source, 'computed')
 }
 
-console.log('\nA PAIR THAT CANNOT BE RUN SAYS SO BEFORE IT IS TRIED')
+console.log('\nWHAT CANNOT BE ASKED, AND WHY')
 {
-  // One replicate in one arm. This used to be offered with a "Run DESeq2"
-  // button that could only ever fail, and the failure arrived as a red line
-  // after the click.
   const b = mk({ conditions: ['WT', 'KO'], control: 'WT', reps: 1 })
-  const list = listComparisons(b)
-  const c = list.find(x => x.numerator === 'KO')
-  check('it is not offered as computable', c.source, 'unavailable')
-  check('and says why, in advance', c.blocked.includes('at least 2 replicates'), true)
-
-  // No raw counts is a different reason and gets a different sentence.
+  check('too few replicates says so in advance',
+    comparisonState(b, ['WT'], ['KO'], [], {}).blocked.includes('at least 2'), true)
   const b2 = mk({ conditions: ['WT', 'KO'], control: 'WT', reps: 6, raw: false })
-  const c2 = listComparisons(b2).find(x => x.numerator === 'KO')
-  check('no raw counts is its own reason', c2.source, 'unavailable')
-  check('and says that instead', c2.blocked.includes('raw_counts.csv'), true)
+  check('no raw counts is its own reason',
+    comparisonState(b2, ['WT'], ['KO'], [], {}).blocked.includes('raw_counts.csv'), true)
+  const b3 = mk({ conditions: ['WT', 'KO'], control: 'WT' })
+  check('a group on both sides is not a comparison',
+    comparisonState(b3, ['WT'], ['WT'], [], {}).blocked.includes('both sides'), true)
+  check('an empty side says so',
+    comparisonState(b3, ['WT'], [], [], {}).blocked.includes('each side'), true)
+}
+
+console.log('\nEXCLUSIONS REACH THE REPLICATE COUNTS')
+{
+  const b = mk({ conditions: ['WT', 'KO'], control: 'WT', reps: 6 })
+  const st = comparisonState(b, ['WT'], ['KO'], ['KO_1', 'KO_2'], {})
+  check('an excluded sample is not counted', st.nTest, 4)
+  check('the other side is untouched', st.nControl, 6)
+  // Down to one usable replicate, the run is refused before it is offered.
+  const thin = comparisonState(b, ['WT'], ['KO'], ['KO_1', 'KO_2', 'KO_3', 'KO_4', 'KO_5'], {})
+  check('exclusions can make a pair unrunnable', thin.source, 'unavailable')
 }
 
 console.log('\nREPLICATES ARE COUNTED FROM THE MATRIX, NOT THE SHEET')
@@ -164,8 +154,10 @@ console.log('\nCONDITIONS THAT DO NOT LINE UP')
   check('a declared condition with no samples is reported',
     audit.some(p => p.kind === 'orphan-condition' && p.text.includes('“Ghost”')), true)
   // And it is not offered as a comparison, because nothing could be drawn.
-  check('and is offered in no comparison',
-    listComparisons(b).some(c => c.numerator === 'Ghost' || c.denominator === 'Ghost'), false)
+  // A condition with no samples has no side to be on: selecting it yields a
+  // comparison with nothing in it, which is refused rather than drawn empty.
+  check('selecting it yields nothing to compare',
+    comparisonState(b, ['WT'], ['Ghost'], [], {}).nTest, 0)
 
   // The other direction: a condition in the sheet that meta.json forgot.
   const b2 = mk({ conditions: ['WT', 'KO'], control: 'WT' })
@@ -193,17 +185,6 @@ console.log('\nA CLEAN BUNDLE IS SILENT')
     contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT' }],
   })
   check('nothing to report', auditBundle(b), [])
-  check('and it opens on the exported contrast', defaultComparison(listComparisons(b)).id, 'KO_vs_WT')
-}
-
-console.log('\nOPENING WHEN THE PIPELINE EXPORTED NOTHING')
-{
-  const b = mk({ conditions: ['WT', 'KO'], control: 'WT', contrasts: [] })
-  const d = defaultComparison(listComparisons(b))
-  // Not null, and not an exported contrast that does not exist — the first pair
-  // that could actually be run.
-  check('falls through to a computable pair', d.source, 'computable')
-  check('control on the bottom', [d.numerator, d.denominator], ['KO', 'WT'])
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll contrast tests passed\n')

@@ -62,9 +62,14 @@ export default function PCAPlot({ bundle, sel }: { bundle: Bundle; sel: GroupSel
    */
   const cols = useMemo(() => {
     const shown = new Set(displayOrder(sel))
+    // Excluded ALWAYS, whatever "only shown groups" says. A sample switched off
+    // on the Overview is out of the analysis; leaving it in the one figure most
+    // likely to reveal why it was switched off would be the wrong exception.
+    const dropped = new Set(sel.excluded)
     const out: number[] = []
     const names: string[] = []
     counts.samples.forEach((name, j) => {
+      if (dropped.has(name)) return
       if (onlyShown) {
         const cond = annot.get(name)?.condition ?? ''
         if (!shown.has(cond)) return
