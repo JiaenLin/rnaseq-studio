@@ -19,6 +19,21 @@ export interface Contrast {
   id: string            // e.g. "KO_vs_WT" — used to locate deg_/enrichment_ files
   numerator: string     // group on top of the log2 ratio (e.g. "KO")
   denominator: string   // reference / control group (e.g. "WT")
+  /**
+   * What kind of question this contrast asks. Absent in schema v1 bundles,
+   * where every contrast is pairwise.
+   *
+   * 'interaction' is not a comparison between two groups at all — it is a model
+   * coefficient asking whether one factor's effect DEPENDS on another, and its
+   * `numerator` is the coefficient's name ("KO:Thermo") with `denominator` the
+   * literal string "interaction". Reading those two as group labels is what
+   * produced "DESeq2 needs at least 2 replicates per group (KO:Thermo: 0)" on a
+   * design where every group had six: they are not groups, and no sample was
+   * ever going to have that condition.
+   *
+   * rnaseq-lab has always written this field. This app did not read it.
+   */
+  kind?: 'pairwise' | 'interaction'
   label: string         // human label, e.g. "KO vs WT"
   deg_file: string
   enrichment_file?: string

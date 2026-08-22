@@ -68,8 +68,13 @@ export default function ComparisonBar({
             <optgroup key={label} label={label}>
               {list.map(c => (
                 <option key={c.id} value={c.id} title={c.blocked}>
-                  {c.label}
-                  {c.groupsAreConditions ? ` · ${c.nNumerator} vs ${c.nDenominator}` : ' · not tied to samples'}
+                  {/* Only when the exporter's own label does not already say
+                      so — rnaseq-lab writes "Interaction: …", and "Interaction
+                      — Interaction: …" is what prefixing unconditionally gets
+                      you. */}
+                  {c.interaction && !/^interaction/i.test(c.label) ? 'Interaction — ' : ''}{c.label}
+                  {c.groupsAreConditions ? ` · ${c.nNumerator} vs ${c.nDenominator}`
+                    : c.interaction ? '' : ' · not tied to samples'}
                 </option>
               ))}
             </optgroup>
@@ -96,7 +101,20 @@ export default function ComparisonBar({
           conditions. The results are real; what cannot be done is tie them to
           samples, and saying so here is the difference between an explained
           limitation and an empty plot. */}
-      {!current.groupsAreConditions && (
+      {/* An interaction is a different kind of question and gets a different
+          sentence. Calling it "not tied to samples" would be true and useless:
+          it is not tied to samples because it is not a comparison of two
+          groups, and a reader needs to know what it IS. */}
+      {current.interaction && (
+        <p className="mt-1.5 text-xs text-slate-500">
+          An <b>interaction</b> term, not a comparison of two groups: it asks whether one
+          factor&rsquo;s effect depends on the level of another, and its log2 fold-change is a
+          <i> difference of differences</i>. Its results table, volcano and enrichment read
+          normally; per-sample expression and the heatmap have no two groups to draw, so pick a
+          pairwise comparison for those.
+        </p>
+      )}
+      {!current.interaction && !current.groupsAreConditions && (
         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
           This contrast compares <b>{current.numerator}</b> and <b>{current.denominator}</b>, which are
           not conditions any sample has — so its differential expression, volcano and enrichment are

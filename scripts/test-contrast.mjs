@@ -35,7 +35,10 @@ function mk({ conditions, control = conditions[0], contrasts = [], reps = 6, raw
 
 console.log('\nTHE SCREENSHOT, AS A TEST')
 {
-  // A factorial pipeline that named its contrasts after model coefficients.
+  // A schema-v1 bundle with no `kind` at all, whose pipeline named its
+  // contrasts after model coefficients. Nothing declares what these are, so the
+  // mismatch with samples.csv is the only evidence there is — and it is a real
+  // defect worth reporting, unlike a declared interaction.
   const b = mk({
     conditions: ['Ctrl_Cold', 'Ctrl_Thermo', 'KO_Cold', 'KO_Thermo'],
     control: 'Ctrl_Cold',
@@ -62,6 +65,35 @@ console.log('\nTHE SCREENSHOT, AS A TEST')
   check('the audit names the problem', audit[0].kind, 'orphan-contrast')
   check('and quotes the offending groups',
     audit[0].text.includes('“Ctrl:Cold”') && audit[0].text.includes('“KO:Thermo”'), true)
+}
+
+console.log('\nAN INTERACTION IS NOT A MISNAMED PAIRWISE CONTRAST')
+{
+  // rnaseq-lab writes kind:'interaction' for the coefficient asking whether one
+  // factor's effect depends on another. Its numerator is the coefficient name
+  // and its denominator is the literal "interaction" — no sample has either,
+  // BY CONSTRUCTION. Reading them as groups is what produced the reported
+  // "needs at least 2 replicates per group (KO:Thermo: 0)".
+  const b = mk({
+    conditions: ['Ctrl_Cold', 'Ctrl_Thermo', 'KO_Cold', 'KO_Thermo'],
+    control: 'Ctrl_Cold',
+    contrasts: [
+      { id: 'p1', numerator: 'KO_Cold', denominator: 'Ctrl_Cold', label: 'KO vs Ctrl (at Cold)', kind: 'pairwise' },
+      { id: 'ix', numerator: 'KO:Thermo', denominator: 'interaction', kind: 'interaction',
+        label: 'Interaction: does the KO-vs-Ctrl effect differ between Thermo and Cold?' },
+    ],
+  })
+  const list = listComparisons(b)
+  const ix = list.find(c => c.id === 'ix')
+  check('the interaction is recognised as one', ix.interaction, true)
+  check('and has no groups, correctly', ix.groupsAreConditions, false)
+  const pw = list.find(c => c.id === 'p1')
+  check('the pairwise one is not', [pw.interaction, pw.groupsAreConditions], [false, true])
+
+  // And the audit stays quiet: an interaction having no groups is not a defect,
+  // and warning about it would train people to ignore the banner.
+  check('the audit does not scold a correct bundle',
+    auditBundle(b).some(p => p.kind === 'orphan-contrast'), false)
 }
 
 console.log('\nEVERY PAIR IS OFFERED ONCE, CONTROL FIRST')
