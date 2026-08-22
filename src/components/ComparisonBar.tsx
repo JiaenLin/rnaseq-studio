@@ -59,14 +59,17 @@ export default function ComparisonBar({
     <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/50">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
+          {/* Control first, then compare — the order the experiment is
+              described in, and the order the reader decides in: you know what
+              the baseline is before you know what you are holding against it. */}
           <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Control
+          </div>
+          <GroupRow all={all} sizes={sizes} sideOf={sideOf} want="control" onPut={put} />
+          <div className="mb-1.5 mt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
             Compare
           </div>
           <GroupRow all={all} sizes={sizes} sideOf={sideOf} want="test" onPut={put} />
-          <div className="mb-1.5 mt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Against (control)
-          </div>
-          <GroupRow all={all} sizes={sizes} sideOf={sideOf} want="control" onPut={put} />
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
