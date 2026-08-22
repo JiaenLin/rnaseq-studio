@@ -4,6 +4,7 @@ import type { GroupSel } from '../lib/design'
 import { displayOrder } from '../lib/design'
 import { conditionColors } from '../lib/palette'
 import { pca } from '../lib/pca'
+import { checkSamples, MIN_SEPARATION } from '../lib/samplecheck'
 import { reportPca, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
 
@@ -120,6 +121,28 @@ export default function PCAPlot({ bundle, sel }: { bundle: Bundle; sel: GroupSel
       result.varFrac[x], result.varFrac[y]].join('|'),
   )
 
+  /**
+   * Do the groups separate at all?
+   *
+   * The question every reader silently asks of a PCA and which the scatter plot
+   * alone cannot answer — a cloud with no structure looks the same whether the
+   * effect is small or the labels are wrong. Computed on the same genes and the
+   * same transform the figure is drawn from, so the warning can never disagree
+   * with the picture above it.
+   *
+   * Declared ABOVE the early return below, and it has to be: a hook after a
+   * conditional return is called on some renders and not others, so the hook
+   * order changes the first time a bundle goes from undecomposable to
+   * decomposable and React throws.
+   */
+  const qc = useMemo(
+    () => checkSamples(
+      counts.values, counts.samples.length,
+      cols.cols, cols.names,
+      cols.names.map(n => annot.get(n)?.condition ?? '—'), { ntop }),
+    [counts.values, counts.samples.length, cols, annot, ntop])
+  const misfits = qc.verdicts.filter(v => v.misfit)
+
   if (result.nPC < 1) {
     return (
       <div className="card p-8 text-center text-sm text-slate-400">
@@ -232,6 +255,34 @@ export default function PCAPlot({ bundle, sel }: { bundle: Bundle; sel: GroupSel
           font: { family: 'system-ui, sans-serif' },
         }}
       />
+
+      {/* The QC verdict, directly under the figure it is about. */}
+      {qc.verdicts.length > 1 && (
+        qc.weakStructure ? (
+          <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            <b>Your groups do not separate on this PCA.</b> Two samples from the same group are
+            about as different as two from different groups (separation{' '}
+            {Number.isFinite(qc.separation) ? qc.separation.toFixed(3) : '—'}, against{' '}
+            {MIN_SEPARATION} for a design that separates). That means one of two things and this
+            figure cannot tell them apart: the treatment effect is genuinely small, or samples are
+            in the wrong groups. <b>Check the Sample check card below before reading any
+            differential expression from this comparison</b> — every p-value on the other tabs
+            assumes these group labels are right.
+          </p>
+        ) : misfits.length > 0 ? (
+          <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            <b>Your groups separate, but {misfits.length} sample
+              {misfits.length === 1 ? '' : 's'} {misfits.length === 1 ? 'sits' : 'sit'} with the
+              wrong one</b> — {misfits.map(v => v.sample).join(', ')}. That is the pattern of a
+            mislabelled sample rather than a weak effect. See the Sample check card below.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">
+            Groups separate cleanly (separation {qc.separation.toFixed(3)}) and every sample sits
+            with its own.
+          </p>
+        )
+      )}
 
       <p className="mt-1 text-xs text-slate-400">
         {result.samples.length} samples · {result.nGenes.toLocaleString()} most variable genes
