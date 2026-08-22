@@ -51,7 +51,20 @@ export const emptySel = (): GroupSel => ({ control: [], test: [], extra: [], exc
 /** Everything shown, with the active contrast's denominator as the reference. */
 export function defaultSelection(meta: BundleMeta, contrast?: Contrast): GroupSel {
   const control = contrast?.denominator || meta.control || meta.conditions[0] || ''
-  const test = contrast?.numerator && contrast.numerator !== control ? [contrast.numerator] : []
+  /**
+   * Something on the compare side, always.
+   *
+   * The contrast's numerator when there is one; otherwise the first condition
+   * that is not the control. A bundle whose pipeline exported no contrasts —
+   * which is now a perfectly ordinary bundle, since the pair no longer has to
+   * be precomputed to be asked — opened with the compare side EMPTY, so the bar
+   * said "choose at least one group on each side" and offered no run button on
+   * a dataset that could answer immediately.
+   */
+  const fallback = meta.conditions.find(c => c && c !== control)
+  const test = contrast?.numerator && contrast.numerator !== control
+    ? [contrast.numerator]
+    : fallback ? [fallback] : []
   return {
     control: control ? [control] : [],
     test,

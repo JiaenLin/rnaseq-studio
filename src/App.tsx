@@ -202,6 +202,20 @@ export default function App() {
     [bundle?.genesets, bundle?.meta.project])
   const library = useLibrary(libGenes, bundle?.meta.species, embedded)
 
+  /** gene_id -> symbol, built once from whichever matrix carries the names. */
+  const symbolOf = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const m of [bundle?.counts, bundle?.rawCounts]) {
+      if (!m) continue
+      for (let i = 0; i < m.geneIds.length; i++) {
+        const nm = m.geneNames[i]
+        if (nm && nm !== m.geneIds[i] && !out.has(m.geneIds[i])) out.set(m.geneIds[i], nm)
+      }
+      if (out.size) break
+    }
+    return out
+  }, [bundle])
+
   /** DESeq2 for the current pair, on explicit request — it is a real analysis. */
   const runPair = async () => {
     // Guarded on the state's own verdict rather than re-deriving one here — the
@@ -218,7 +232,10 @@ export default function App() {
     try {
       const rows = await runDESeq2(
         { raw: bundle.rawCounts, samples: bundle.samples,
-          numerator: sel.test, denominator: sel.control, excluded: sel.excluded }, log)
+          numerator: sel.test, denominator: sel.control, excluded: sel.excluded,
+          // From the NORMALIZED matrix: raw_counts.csv is often accession-only
+          // while normalized_counts.csv carries the symbol column.
+          geneNames: symbolOf }, log)
       setComputed(c => ({ ...c, [pair]: rows }))
       setRun(r => (r.pair === pair ? { pair, running: false, log: '' } : r))
     } catch (e: any) {

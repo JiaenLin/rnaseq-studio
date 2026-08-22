@@ -196,6 +196,18 @@ console.log('\nREPLICATES ARE COUNTED FROM THE MATRIX, NOT THE SHEET')
     matrixDrops: ['KO_5', 'KO_6'],
   })
   check('the matrix decides', [...conditionSizes(b).entries()].sort(), [['KO', 4], ['WT', 6]])
+  // And exclusions come off the top, because these numbers are printed on the
+  // group chips beside a summary line that already subtracts them.
+  check('exclusions come off the chip counts',
+    [...conditionSizes(b, ['KO_1', 'WT_1']).entries()].sort(), [['KO', 3], ['WT', 5]])
+  // Pre-seeding every declared condition with 0 here would make auditBundle's
+  // `sizes.has(c)` true for a condition no sample carries, retiring that
+  // warning silently. Pinned so the shortcut is not taken later.
+  const ghosty = mk({ conditions: ['WT', 'KO', 'Ghost'], control: 'WT' })
+  ghosty.samples = ghosty.samples.filter(x => x.condition !== 'Ghost')
+  ghosty.counts.samples = ghosty.samples.map(x => x.sample)
+  check('a condition with no samples is absent, not zero',
+    conditionSizes(ghosty).has('Ghost'), false)
   const audit = auditBundle(b)
   check('and the discrepancy is reported', audit.some(p => p.kind === 'missing-samples'), true)
   check('naming how many', audit.find(p => p.kind === 'missing-samples').text.includes('2 samples'), true)

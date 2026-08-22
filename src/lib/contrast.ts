@@ -34,8 +34,15 @@
 import type { Bundle, Contrast, SampleRow } from '../types'
 import { samplesInGroups } from './design.ts'
 
-/** Sample counts per condition, from samples.csv intersected with the matrix. */
-export function conditionSizes(bundle: Bundle): Map<string, number> {
+/**
+ * Sample counts per condition, from samples.csv intersected with the matrix,
+ * minus anything the reader has excluded.
+ *
+ * The exclusion argument is not optional in spirit: these numbers are printed
+ * on the group chips, and a chip reading "KO_Cold 6" beside a summary line
+ * reading "5 samples" is the app disagreeing with itself on screen.
+ */
+export function conditionSizes(bundle: Bundle, excluded: readonly string[] = []): Map<string, number> {
   /**
    * Counted over the columns the MATRIX has, not the rows samples.csv has.
    *
@@ -45,9 +52,15 @@ export function conditionSizes(bundle: Bundle): Map<string, number> {
    * group could advertise six replicates and draw four.
    */
   const inMatrix = new Set(bundle.counts.samples)
+  const gone = new Set(excluded)
   const out = new Map<string, number>()
+  // Deliberately NOT pre-seeded with every declared condition. auditBundle
+  // asks `sizes.has(c)` to find a condition meta.json declares that no sample
+  // carries, so seeding zeros would make that check pass for everything and
+  // silently retire the warning. A group whose samples are all excluded is kept
+  // visible by the caller instead — see ComparisonBar's `total`.
   for (const s of bundle.samples) {
-    if (!inMatrix.has(s.sample)) continue
+    if (!inMatrix.has(s.sample) || gone.has(s.sample)) continue
     out.set(s.condition, (out.get(s.condition) ?? 0) + 1)
   }
   return out

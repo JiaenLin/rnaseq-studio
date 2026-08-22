@@ -7,7 +7,7 @@
 // any error. Identifiers must stay text; only numeric columns get coerced.
 import { assemble } from '../src/lib/bundle.ts'
 import { defaultSelection, displayOrder, orderSamples, samplesInGroups } from '../src/lib/design.ts'
-import { computedContrastId, countSignificant, isComputedContrast } from '../src/lib/deseq.ts'
+import { computedContrastId, countSignificant, isComputedContrast, namesOf, withSymbols } from '../src/lib/deseq.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -82,6 +82,12 @@ console.log('\nGROUP SELECTION')
   // pooled main effect is asked for on a factorial design.
   check('default reference is the contrast denominator', def.control, ['517E2'])
   check('default compares the contrast numerator', def.test, [meta.contrasts[0].numerator])
+  // With no contrast to take it from, something is still chosen — a bundle that
+  // exported none is ordinary now, and it must open ready to answer.
+  const bare = defaultSelection({ ...meta, contrasts: [] })
+  check('a bundle with no contrasts still has both sides',
+    [bare.control.length, bare.test.length], [1, 1])
+  check('and does not compare the control with itself', bare.control[0] === bare.test[0], false)
   check('every other group is still drawn',
     displayOrder(def).length, CONDITIONS.length)
   check('control is drawn first', displayOrder(def)[0], '517E2')
@@ -111,6 +117,37 @@ console.log('\nGROUP SELECTION')
   check('and honours exclusions',
     samplesInGroups(bundle.counts.samples, bundle.samples,
       ['517E2', '517E2+RSL3'], [pooled[0]]).length, 3)
+}
+
+console.log('\nA RUN PERFORMED HERE STILL HAS GENE SYMBOLS')
+{
+  // R is handed a matrix keyed by accession and has no idea what any of them
+  // are called, so every row comes back with gene_name === gene_id. The symbols
+  // are in the bundle all along; they were simply never carried across, so an
+  // in-browser DEG table read ENSMUSG00000121069 all the way down.
+  const m = {
+    geneIds: ['ENSMUSG00000121069', 'ENSMUSG00000038508', 'ENSMUSG00000099999'],
+    geneNames: ['Ucp1', 'Dio2', ''],          // third has no symbol in the bundle
+    samples: [], values: new Float64Array(0), index: new Map(),
+  }
+  const names = namesOf(m)
+  check('a symbol map is built', [...names.entries()],
+    [['ENSMUSG00000121069', 'Ucp1'], ['ENSMUSG00000038508', 'Dio2']])
+
+  const rows = m.geneIds.map(id => ({ gene_id: id, gene_name: id, baseMean: 1,
+    log2FoldChange: 0, lfcSE: 0, pvalue: 1, padj: 1 }))
+  const named = withSymbols(rows, names)
+  check('symbols replace the accessions', named.map(r => r.gene_name),
+    ['Ucp1', 'Dio2', 'ENSMUSG00000099999'])
+  // A gene the bundle has no symbol for keeps its accession rather than going
+  // blank — an empty Gene column is worse than an unhelpful one.
+  check('and an unknown gene keeps its id', named[2].gene_name, named[2].gene_id)
+
+  // An accession-only bundle yields no map, and nothing is touched.
+  const bare = { geneIds: ['A', 'B'], geneNames: ['A', 'B'], samples: [], values: new Float64Array(0), index: new Map() }
+  check('an id-only matrix produces no map', namesOf(bare).size, 0)
+  check('and rows pass through unchanged',
+    withSymbols([{ gene_id: 'A', gene_name: 'A' }], namesOf(bare))[0].gene_name, 'A')
 }
 
 console.log('\nDESeq2 CONTRAST HELPERS')

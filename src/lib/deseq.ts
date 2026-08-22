@@ -78,6 +78,19 @@ export interface DeseqRequest {
   denominator: string[]
   /** Sample names the reader has taken out of the analysis. */
   excluded?: readonly string[]
+  /**
+   * gene_id -> symbol, so a run performed here carries the same gene names the
+   * pipeline's own tables do.
+   *
+   * Without it every DEG table from an in-browser run reads
+   * `ENSMUSG00000121069`, because the matrix R is handed is keyed by accession
+   * and R has no idea what any of them are called. The symbols are already in
+   * the bundle — `normalized_counts.csv` has a gene_name column — they were
+   * simply never carried across. It has been that way since the in-browser run
+   * was added; picking contrasts freely just made it the common case rather
+   * than the rare one.
+   */
+  geneNames?: Map<string, string>
 }
 
 /**
@@ -96,7 +109,7 @@ export interface DeseqRequest {
  * does not fit one — the bundle's own exporter does.
  */
 export async function runDESeq2(
-  { raw, samples, numerator, denominator, excluded = [] }: DeseqRequest,
+  { raw, samples, numerator, denominator, excluded = [], geneNames }: DeseqRequest,
   log: (m: string) => void,
 ): Promise<DEGRow[]> {
   const cond: Record<string, string> = {}
@@ -150,7 +163,31 @@ export async function runDESeq2(
   const nDeg = await webR.evalRString(DESEQ_R.replace('__REF__', JSON.stringify('CTRL')))
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
   log(`Done — ${nDeg} genes at padj < 0.05.`)
-  return parseDegCsv(csv)
+  return withSymbols(parseDegCsv(csv), geneNames ?? namesOf(raw))
+}
+
+/** gene_id -> symbol from a matrix that carries both, for the fallback. */
+export function namesOf(m: CountsMatrix): Map<string, string> {
+  const out = new Map<string, string>()
+  for (let i = 0; i < m.geneIds.length; i++) {
+    const nm = m.geneNames[i]
+    if (nm && nm !== m.geneIds[i]) out.set(m.geneIds[i], nm)
+  }
+  return out
+}
+
+/**
+ * Put the symbols back.
+ *
+ * R only ever saw accessions, so every row comes back with gene_name equal to
+ * gene_id. The lookup is the bundle's own, so a gene reads the same here as it
+ * does in a table the pipeline exported — and a gene the lookup does not know
+ * keeps its accession rather than becoming blank.
+ */
+export function withSymbols(rows: DEGRow[], names: Map<string, string>): DEGRow[] {
+  if (!names.size) return rows
+  for (const r of rows) r.gene_name = names.get(r.gene_id) || r.gene_id
+  return rows
 }
 
 const num = (v: string): number | null => {

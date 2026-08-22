@@ -31,8 +31,10 @@ export default function ComparisonBar({
   onSel: (next: GroupSel) => void
   onRun: () => void
 }) {
-  const sizes = conditionSizes(bundle)
-  const all = bundle.meta.conditions.filter(c => sizes.has(c))
+  // After exclusions, so a chip can never disagree with the summary line below it.
+  const sizes = conditionSizes(bundle, sel.excluded)
+  const total = conditionSizes(bundle)
+  const all = bundle.meta.conditions.filter(c => (total.get(c) ?? 0) > 0)
   const failed = runLog.startsWith('Failed')
 
   /**
