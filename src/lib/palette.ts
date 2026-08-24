@@ -56,3 +56,13 @@ export const contrastTitle = (text: string) => ({
   x: 0, xanchor: 'left' as const, y: 1, yanchor: 'top' as const,
   font: { size: 12.5 },
 })
+
+/**
+ * Colours for an arbitrary list of named sets — Venn circles, UpSet rows.
+ *
+ * The same ramp the conditions use, indexed by position rather than by name:
+ * a set here is a *comparison*, not a group, so there is no name to key on that
+ * would mean anything to the other plots.
+ */
+export const setColors = (n: number): string[] =>
+  Array.from({ length: n }, (_, i) => (i < PALETTE.length ? PALETTE[i] : extendedColor(i)))

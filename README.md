@@ -21,6 +21,12 @@ sets. Everything runs client-side — **your data never leaves your device** (no
 - **Volcano** — interactive, with tunable −log10(padj) and |log2FC| cutoffs; click a point to
   jump to that gene.
 - **DEG table** — sortable/filterable, with a combined score (−log10 p × log2FC) and CSV export.
+- **Overlap (Venn)** — intersect the DEG lists of two or more comparisons: a proportional Venn
+  for up to four, an UpSet matrix beyond that, up to six in all. Every wedge is *exclusive* and
+  clickable — the genes in exactly those comparisons and no others — with each gene's log2FC and
+  padj side by side per comparison, so on a 2×2 you can read off what a treatment does in both
+  backgrounds, what is unique to one, and (with **same direction only**) which "shared" genes are
+  actually moving opposite ways. Exports to PNG, SVG and CSV.
 - **Enrichment** — live, tunable over-representation analysis (ORA) against **the whole of
   MSigDB**, human and mouse, fetched a collection at a time: set your padj / log2FC / direction
   and watch enriched pathways update; drill into a term's genes and their stats; export every
@@ -92,7 +98,7 @@ A citable DOI is minted per release via Zenodo; a software paper is in `paper/`.
 ```bash
 npm install
 node scripts/gen-sample.mjs   # regenerate the demo bundle in public/sample/
-npm test                      # bundle parsing, the ORA maths, the gene-set library
+npm test                      # bundle parsing, the ORA maths, the gene-set library, the Venn geometry
 npm run dev                   # http://localhost:5173
 npm run build && npm run preview
 ```

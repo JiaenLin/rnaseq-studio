@@ -49,6 +49,19 @@ export interface SetParams {
   direction: 'both' | 'up' | 'down'
 }
 
+export interface OverlapParams {
+  nSets: number
+  labels: string[]
+  padjMax: number
+  lfcMin: number
+  direction: 'both' | 'up' | 'down'
+  concordantOnly: boolean
+  /** Genes significant in every one of them. */
+  shared: number
+  /** Genes significant in at least one. */
+  union: number
+}
+
 export interface PcaParams {
   /** Genes entering the decomposition — DESeq2's ntop. */
   ntop: number
@@ -66,8 +79,9 @@ export interface MethodsState {
   ora: OraParams | null
   sets: SetParams | null
   pca: PcaParams | null
+  overlap: OverlapParams | null
   /** Which tabs have actually been opened — an unopened tab is still at defaults. */
-  seen: Record<'de' | 'ora' | 'sets' | 'pca', boolean>
+  seen: Record<'de' | 'ora' | 'sets' | 'pca' | 'overlap', boolean>
 }
 
 // Defaults mirror each component's initial state, so the text is complete even
@@ -77,7 +91,8 @@ let state: MethodsState = {
   ora: null,
   sets: null,
   pca: null,
-  seen: { de: false, ora: false, sets: false, pca: false },
+  overlap: null,
+  seen: { de: false, ora: false, sets: false, pca: false, overlap: false },
 }
 
 const listeners = new Set<() => void>()
@@ -101,6 +116,12 @@ export function reportPca(p: PcaParams) {
 export function reportSets(p: SetParams) {
   if (state.sets && shallowEq(state.sets, p)) return
   state = { ...state, sets: p, seen: { ...state.seen, sets: true } }
+  emit()
+}
+
+export function reportOverlap(p: OverlapParams) {
+  if (state.overlap && shallowEq(state.overlap, p)) return
+  state = { ...state, overlap: p, seen: { ...state.seen, overlap: true } }
   emit()
 }
 
@@ -255,7 +276,7 @@ const SCORE_TEXT: Record<SetParams['scoreMethod'], string> = {
   meanz: 'the mean z-score of set members across samples',
 }
 
-export type AnalysisId = 'de' | 'pca' | 'ora' | 'sets' | 'ranking'
+export type AnalysisId = 'de' | 'pca' | 'ora' | 'sets' | 'overlap' | 'ranking'
 export type CiteStyle = 'numbered' | 'authoryear'
 
 export interface MethodsDoc {
@@ -349,6 +370,24 @@ export function buildDoc(
       `with Benjamini–Hochberg correction and the ${fmtN(o.nBackground)} annotated genes detected in this ` +
       `dataset as background (${fmtN(o.nSig)} sets at adjusted p < 0.05).`)
     if (!s.seen.ora) unseen.push('enrichment')
+  }
+
+  /* Where several comparisons agree.
+     Its own sentence rather than a clause on the DE one: it describes a
+     different object — a relationship between gene lists, not a gene list. */
+  if (include.has('overlap') && s.overlap && s.overlap.nSets > 1) {
+    const o = s.overlap
+    const same = o.padjMax === s.de.padjThr && o.lfcMin === s.de.lfcThr && o.direction === 'both'
+    sentences.push(
+      `The differentially expressed genes of ${o.nSets} comparisons (${list(o.labels)}) were intersected` +
+      (same
+        ? ' at the same cutoffs'
+        : ` at an adjusted p below ${fmtP(o.padjMax)} and |log2 fold-change| of at least ${fmtL(o.lfcMin)}` +
+          (o.direction === 'both' ? '' : `, restricted to genes ${o.direction}-regulated in each comparison's test group`)) +
+      (o.concordantOnly ? ', counting a gene as shared only where it changed in the same direction in every comparison' : '') +
+      `; ${fmtN(o.union)} genes were differentially expressed in at least one comparison and ` +
+      `${fmtN(o.shared)} in all ${o.nSets}.`)
+    if (!s.seen.overlap) unseen.push('comparison overlap')
   }
 
   /* User-defined gene-set activity */

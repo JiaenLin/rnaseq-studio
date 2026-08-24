@@ -3,7 +3,9 @@ import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, sideLabel } from './lib/design'
 import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
-import { auditBundle, comparisonKey, comparisonState } from './lib/contrast'
+import { auditBundle, comparisonKey, comparisonState, relevantExclusions } from './lib/contrast'
+import type { ComputedRun } from './lib/venn'
+import { overlapSources } from './lib/venn'
 import ComparisonBar from './components/ComparisonBar'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
@@ -13,6 +15,7 @@ import GeneExpression from './components/GeneExpression'
 import GeneSetExplorer from './components/GeneSetExplorer'
 import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
+import Overlap from './components/Overlap'
 import Enrichment from './components/Enrichment'
 import Methods from './components/Methods'
 
@@ -22,13 +25,17 @@ const LAB_URL = 'https://jiaenlin.github.io/rnaseq-lab/'
 const SERVICE_URL = 'https://jiaenlin.github.io/rnaseq-service/'
 const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
 
-type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'enrichment' | 'geneset' | 'methods'
+type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'overlap' | 'enrichment' | 'geneset' | 'methods'
 // Ordered the way results are read: what the dataset is, then the statistics,
 // then the pathway view, then drilling into genes, then writing it up.
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'degs', label: 'DEG table' },
   { id: 'volcano', label: 'Volcano' },
+  // Between the single-comparison views and the pathway view, because that is
+  // where the question arises: you have read one gene list and want to know
+  // what it shares with the next one.
+  { id: 'overlap', label: 'Overlap' },
   { id: 'enrichment', label: 'Enrichment' },
   { id: 'expression', label: 'Gene expression' },
   { id: 'geneset', label: 'Gene sets' },
@@ -56,6 +63,16 @@ export default function App() {
   // DESeq2 results computed this session, keyed by "<numerator>|<denominator>".
   const [computed, setComputed] = useState<Record<string, DEGRow[]>>({})
   /**
+   * What each of those runs actually compared.
+   *
+   * The cache key cannot be parsed back into it: group names may contain the
+   * same '+' and '|' the key joins on ("517E2+RSL3" is a real condition in this
+   * app's own tests), so a parser would split one group into two on exactly the
+   * bundles hardest to debug. The Overlap tab needs a legend entry per run, so
+   * the run describes itself here instead.
+   */
+  const [computedRuns, setComputedRuns] = useState<Record<string, ComputedRun>>({})
+  /**
    * The run, and which pair it belongs to.
    *
    * `runLog` used to be one string for the whole app and was never cleared, so
@@ -78,6 +95,9 @@ export default function App() {
     // from meta.contrasts[0] alone — a bundle that exported no contrast at all
     // still opens on a pair it could compute rather than on nothing.
     setSel(defaultSelection(b.meta, b.meta.contrasts.find(c => c.kind !== 'interaction')))
+    // Another bundle's runs are another dataset's genes.
+    setComputed({})
+    setComputedRuns({})
     setRun({ pair: '', running: false, log: '' })
     setGene(null)
     setGeneText('')
@@ -146,6 +166,19 @@ export default function App() {
   /* What the bundle got wrong, said once at the top rather than discovered as
    * an empty plot four tabs away. */
   const problems = useMemo(() => (bundle ? auditBundle(bundle) : []), [bundle])
+
+  /* Every differential-expression table this session can put in a Venn: the
+   * ones the pipeline exported and the ones DESeq2 was run for here.
+   *
+   * Deliberately NOT derived from `active` — the Overlap tab is the one view
+   * that is not about the pair on screen, and gating it on that pair having
+   * statistics would hide the diagram exactly when the reader has just run the
+   * second comparison they wanted to intersect. */
+  const overlapCatalog = useMemo(
+    () => (bundle
+      ? overlapSources(bundle.meta.contrasts, bundle.degByContrast, computed, computedRuns)
+      : []),
+    [bundle, computed, computedRuns])
 
   /* The contrast the tabs read, and the bundle they read it from.
    *
@@ -237,6 +270,10 @@ export default function App() {
           // while normalized_counts.csv carries the symbol column.
           geneNames: symbolOf }, log)
       setComputed(c => ({ ...c, [pair]: rows }))
+      setComputedRuns(r => ({ ...r, [pair]: {
+        test: [...sel.test], control: [...sel.control],
+        excluded: relevantExclusions(bundle, sel.control, sel.test, sel.excluded),
+      } }))
       setRun(r => (r.pair === pair ? { pair, running: false, log: '' } : r))
     } catch (e: any) {
       setRun(r => (r.pair === pair ? { pair, running: false, log: `Failed: ${e?.message || e}` } : r))
@@ -369,9 +406,16 @@ export default function App() {
                 text={geneText} onText={setGeneText}
                 selectedGene={gene} onSelectGene={pickGene} />
             )}
+            {/* Neither is Overlap: it reads every comparison that has a result,
+                not the one selected above, so a pair still waiting on DESeq2
+                must not blank it. */}
+            {tab === 'overlap' && (
+              <Overlap sources={overlapCatalog} canCompute={!!bundle.rawCounts}
+                onSelectGene={pickGene} />
+            )}
             {/* Everything below is statistics. With none for this pair, showing
                 anything at all would be showing another comparison's numbers. */}
-            {tab !== 'overview' && tab !== 'expression' && pending && (
+            {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap' && pending && (
               <NeedsStats
                 contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}
                 runLog={myRun.log} withheld={state?.staleExclusions ?? []} onRun={runPair} />
