@@ -382,6 +382,55 @@ const looksLikeDescription = (f: string): boolean =>
   f === '' || /\s/.test(f) || /^https?:/i.test(f)
   || ['na', 'n/a', 'none', 'null', '-', '.', '?'].includes(f.toLowerCase())
 
+/**
+ * A collection built from gene lists this app already holds, rather than parsed.
+ *
+ * The other two ways a collection comes into being both start from text — a
+ * bundle's genesets.csv and the paste box — and both intern their symbols the
+ * same way. This is the third: a set the app itself derived, such as a wedge of
+ * the Venn on the Overlap tab. Going through `parseSets` would have worked and
+ * was the first attempt; it breaks on the names, because that format is
+ * `Name: gene, gene` and a contrast named after a model coefficient
+ * ("KO:Warm vs interaction") carries a colon of its own. Building the structure
+ * directly has no format to collide with.
+ *
+ * The result is an ordinary Collection, so a derived set is editable in the set
+ * editor, removable from the Collections picker and testable in ORA exactly as
+ * a pasted one is. Nothing downstream knows where it came from.
+ */
+export function collectionOf(
+  source: string,
+  release: string,
+  defs: readonly { id: string; name: string; genes: readonly string[] }[],
+  species = 'any',
+): Collection {
+  const at = new Map<string, number>()
+  const symbols: string[] = []
+  const intern = (g: string): number => {
+    let k = at.get(g)
+    if (k === undefined) { k = symbols.length; at.set(g, k); symbols.push(g) }
+    return k
+  }
+  /** Last wins, as in parseSets — re-deriving a set replaces it. */
+  const order = new Map<string, number>()
+  const sets: CollectionSet[] = []
+  for (const d of defs) {
+    const seen = new Set<number>()
+    const genes: number[] = []
+    for (const g of d.genes) {
+      const t = g.trim()
+      if (!t) continue
+      const k = intern(t)
+      if (!seen.has(k)) { seen.add(k); genes.push(k) }
+    }
+    const set = { id: d.id, name: d.name || d.id, genes: Int32Array.from(genes) }
+    const prev = order.get(d.id)
+    if (prev === undefined) { order.set(d.id, sets.length); sets.push(set) }
+    else sets[prev] = set
+  }
+  return { species, source, release, symbols, sets }
+}
+
 export function parseSets(text: string, name = 'My sets'): Collection {
   const body = text.trim()
   if (!body) throw new Error('nothing to read — paste your gene sets first')

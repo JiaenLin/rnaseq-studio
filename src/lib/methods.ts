@@ -29,6 +29,15 @@ export interface OraParams {
   nDeg: number
   nBackground: number
   nSig: number
+  /**
+   * Where the tested gene list came from, when it was not this contrast's DEGs.
+   *
+   * A wedge of the Overlap Venn is a list assembled from several comparisons,
+   * and the padj / log2FC fields above are then the defaults the tab happens to
+   * be holding rather than anything that touched it. Without this the paragraph
+   * described a filtering step that never ran.
+   */
+  query?: string | null
 }
 export interface SetParams {
   nSets: number
@@ -359,11 +368,16 @@ export function buildDoc(
     // repeating identical thresholds is the kind of padding a reviewer notices.
     const sameAsDe = include.has('de')
       && o.padjMax === s.de.padjThr && o.lfcMin === s.de.lfcThr && o.direction === 'both'
-    const subject = sameAsDe
-      ? 'These differentially expressed genes'
-      : `Differentially expressed genes (adjusted p < ${fmtP(o.padjMax)}, ` +
-        `|log2 fold-change| ≥ ${fmtL(o.lfcMin)}, ${directionText(o.direction, contrast.numerator)}; ` +
-        `${fmtN(o.nDeg)} genes)`
+    const subject = o.query
+      // Named, not described by cutoffs: the list was selected on the Overlap
+      // tab, across comparisons, and no threshold on the enrichment card
+      // touched it.
+      ? `The ${fmtN(o.nDeg)} genes ${o.query}`
+      : sameAsDe
+        ? 'These differentially expressed genes'
+        : `Differentially expressed genes (adjusted p < ${fmtP(o.padjMax)}, ` +
+          `|log2 fold-change| ≥ ${fmtL(o.lfcMin)}, ${directionText(o.direction, contrast.numerator)}; ` +
+          `${fmtN(o.nDeg)} genes)`
     sentences.push(
       `${subject} were tested for over-representation against ${fmtN(o.nSets)} gene sets from ` +
       `${src}, restricted to sets of ${o.minSize}–${o.maxSize} genes, using a one-sided hypergeometric test ` +

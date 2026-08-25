@@ -3,6 +3,7 @@ import type { Bundle, Contrast, DEGRow } from '../types'
 import { combinedScore } from '../lib/stats'
 import { oraColorDomain, oraIndexed, type ORAResult } from '../lib/ora'
 import { useSetIndex, type LibraryControl } from '../lib/genesets.ts'
+import type { OverlapQuery, QueryRow } from '../lib/venn'
 import { LibraryPicker } from './GeneSetSources.tsx'
 import { contrastTitle } from '../lib/palette'
 import { reportOra, useReport } from '../lib/methods'
@@ -13,6 +14,18 @@ interface Props {
   contrast: Contrast
   /** The app's one gene-set library — see useLibrary in lib/genesets.ts. */
   library: LibraryControl
+  /**
+   * A gene list to test INSTEAD of this contrast's DEGs — a wedge of the Venn
+   * on the Overlap tab.
+   *
+   * The genes in a wedge were already selected, by cutoffs applied to several
+   * comparisons at once; re-filtering them by this tab's padj and log2FC would
+   * apply one comparison's thresholds to a list that is not one comparison's.
+   * So when this is set the cutoff controls are gone rather than ignored, and
+   * the query, the background and the drill-down all come from the wedge.
+   */
+  query?: OverlapQuery | null
+  onClearQuery?: () => void
   onSelectGene: (gene: string) => void
 }
 
@@ -54,8 +67,11 @@ export default function Enrichment(props: Props) {
   return <CustomORA {...props} />
 }
 
-function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
-  const deg = bundle.degByContrast[contrast.id] || []
+function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGene }: Props) {
+  // The wedge's own rows when there is one — so the member drill-down below
+  // shows the evidence that put each gene in it, not another comparison's.
+  const contrastDeg = bundle.degByContrast[contrast.id] || []
+  const deg: MaybeSourced[] = query ? query.rows : contrastDeg
   const [padjMax, setPadjMax] = useState(0.05)
   const [lfcMin, setLfcMin] = useState(1)
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
@@ -100,11 +116,41 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
    * cannot be done here.
    */
   const background = useMemo(
-    () => deg.map(r => r.gene_name || r.gene_id), [deg])
-  const index = useSetIndex(lib.collections, background)
+    () => (query ? query.background : deg.map(r => r.gene_name || r.gene_id)),
+    [query, deg])
+
+  /**
+   * Nothing is tested against itself.
+   *
+   * A wedge can be saved as a gene set on the Overlap tab, and a saved set is
+   * live in the library immediately — so testing that same wedge would find it
+   * at a perfect overlap and an astronomical p-value, top the chart with it,
+   * and push every real hit down the ranking. Removed from the COLLECTIONS
+   * rather than filtered out of the results, because a set that reaches the
+   * test also enters the Benjamini–Hochberg correction, and one impossible
+   * p-value in there moves every other set's adjusted p.
+   */
+  const queryId = query?.setId
+  const collections = useMemo(() => {
+    if (!queryId) return lib.collections
+    return lib.collections.map(c => {
+      const keep = c.sets.filter(x => x.id !== queryId)
+      return keep.length === c.sets.length ? c : { ...c, sets: keep }
+    })
+  }, [lib.collections, queryId])
+  const selfExcluded = !!queryId
+    && lib.collections.some(c => c.sets.some(x => x.id === queryId))
+
+  const index = useSetIndex(collections, background)
 
   const degUpper = useMemo(() => {
     const s = new Set<string>()
+    // A wedge is already a selection. Filtering it again here would be a second
+    // pass of one contrast's cutoffs over a list drawn from several.
+    if (query) {
+      for (const r of query.rows) s.add((r.gene_name || r.gene_id).toUpperCase())
+      return s
+    }
     for (const r of deg) {
       if (r.padj == null || r.padj > padjMax) continue
       if (r.log2FoldChange == null || Math.abs(r.log2FoldChange) < lfcMin) continue
@@ -113,7 +159,7 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
       s.add((r.gene_name || r.gene_id).toUpperCase())
     }
     return s
-  }, [deg, padjMax, lfcMin, direction])
+  }, [query, deg, padjMax, lfcMin, direction])
 
   /**
    * oraIndexed, not runORA.
@@ -179,9 +225,12 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
     () => reportOra({
       padjMax, lfcMin, direction, minSize, maxSize, sources: allSources,
       nSets, nDeg: degUpper.size, nBackground: nBg, nSig,
+      // Without this the Methods paragraph would claim the tested list came out
+      // of the cutoffs beside it, which for a wedge is simply untrue.
+      query: query ? query.prose : null,
     }),
     [padjMax, lfcMin, direction, minSize, maxSize, allSources.join(','),
-      nSets, degUpper.size, nBg, nSig].join('|'),
+      nSets, degUpper.size, nBg, nSig, query?.prose ?? ''].join('|'),
   )
 
   const top = orderedResults.slice(0, topN)
@@ -212,7 +261,9 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `enrichment_${contrast.id}_${direction}.csv`
+    a.download = query
+      ? `enrichment_${fileSlug(query.label)}.csv`
+      : `enrichment_${contrast.id}_${direction}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
   }
@@ -224,10 +275,37 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
             like the thresholds below them — switching GO:BP off changes what is
             tested and therefore what Benjamini–Hochberg is applied across — so
             they sit on the card that runs the test. */}
+        {query && (
+          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm dark:border-indigo-500/40 dark:bg-indigo-500/10">
+            <span className="pill bg-indigo-200 text-indigo-900 dark:bg-indigo-500/25 dark:text-indigo-100">
+              from Overlap
+            </span>
+            <span className="min-w-0 text-indigo-900 dark:text-indigo-200">
+              Testing <b>{query.rows.length.toLocaleString()} genes</b> — {query.label} — against the{' '}
+              {background.length.toLocaleString()} genes these {query.nSets} comparisons tested.
+            </span>
+            {selfExcluded && (
+              <span className="w-full text-xs text-indigo-800/80 dark:text-indigo-300/80">
+                This selection is also saved as a gene set. It is left out of its own test — a set
+                that is the query cannot be enriched for it.
+              </span>
+            )}
+            {onClearQuery && (
+              <button className="btn ml-auto py-1 text-xs" onClick={onClearQuery}>
+                ← back to {contrast.label} DEGs
+              </button>
+            )}
+          </div>
+        )}
+
         <LibraryPicker library={library} index={index} background={background}
           recorded={bundle.meta.species} />
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${query ? 'xl:grid-cols-3' : 'xl:grid-cols-6'}`}>
+          {/* The cutoffs are hidden, not disabled, when a wedge is being tested:
+              a greyed-out "padj ≤ 0.05" beside a list that was not selected by
+              it still reads as a description of that list. */}
+          {!query && <>
           <Ctl label="padj ≤">
             <div className="flex items-center gap-2">
               <input type="range" min={0} max={0.25} step={0.005} value={Math.min(padjMax, 0.25)} onChange={e => setPadjMax(+e.target.value)} className="w-full" />
@@ -249,6 +327,7 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
               <option value="down">up in {contrast.denominator}</option>
             </select>
           </Ctl>
+          </>}
           <Ctl label="set size">
             <div className="flex items-center gap-1">
               <input type="number" className="input w-16 py-1" value={minSize} min={1}
@@ -283,7 +362,7 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
         </div>
 
         <p className="mt-3 text-sm text-slate-500">
-          <b>{degUpper.size.toLocaleString()}</b> DEGs at these thresholds ({nDegInBg.toLocaleString()} in the annotated background of {nBg.toLocaleString()}) ·
+          <b>{degUpper.size.toLocaleString()}</b>{query ? ' genes in this selection' : ' DEGs at these thresholds'} ({nDegInBg.toLocaleString()} in the annotated background of {nBg.toLocaleString()}) ·
           <b> {results.length.toLocaleString()}</b> enriched sets (padj &lt; 0.05: {nSig.toLocaleString()})
         </p>
       </div>
@@ -294,7 +373,10 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
            four of them were not about the thresholds at all. */
         <div className="card p-10 text-center text-sm text-slate-400">
           {degUpper.size === 0
-            ? `No gene passes padj ≤ ${padjMax} and |log2FC| ≥ ${lfcMin}, so there is nothing to
+            ? query
+              ? `This selection holds no genes, so there is nothing to test. Pick a wedge with
+                 genes in it on the Overlap tab, or loosen the cutoffs there.`
+              : `No gene passes padj ≤ ${padjMax} and |log2FC| ≥ ${lfcMin}, so there is nothing to
                test. Loosen the cutoffs above.`
             : inRange.of === 0
               ? 'No collection is loaded, so there was nothing to test against. Switch one on under Collections above.'
@@ -308,8 +390,10 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
                      On a collection of your own that usually means the species or the
                      capitalisation differs from this bundle — the set editor lists which genes
                      it could not find.`
-                  : `${degUpper.size.toLocaleString()} DEGs against ${inRange.n.toLocaleString()} sets,
-                     and no set overlaps them. Loosen padj / log2FC, or widen the set-size range.`}
+                  : `${degUpper.size.toLocaleString()} genes against ${inRange.n.toLocaleString()} sets,
+                     and no set overlaps them. ${query
+                       ? 'Widen the set-size range, or switch more collections on.'
+                       : 'Loosen padj / log2FC, or widen the set-size range.'}`}
         </div>
       ) : (
         <>
@@ -319,9 +403,9 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
             </div>
             <Plot
               data={[barTrace(bars, metric, nDegInBg)]}
-              layout={barLayout(bars.length, contrast.label, metric)}
+              layout={barLayout(bars.length, query ? query.label : contrast.label, metric)}
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
-              downloadName={`ORA_${contrast.id}_${direction}`}
+              downloadName={query ? `ORA_${fileSlug(query.label)}` : `ORA_${contrast.id}_${direction}`}
             />
             <p className="mt-1 text-center text-xs text-slate-400">
               Live over-representation (hypergeometric + BH). Colour = −log10 p.adjust; the scale
@@ -346,7 +430,7 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
             <div className="card p-4">
               <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                  {selected.name}<span className="ml-2 font-mono text-xs normal-case text-slate-400">{selected.id} · {selected.source} · {contrast.label}</span>
+                  {selected.name}<span className="ml-2 font-mono text-xs normal-case text-slate-400">{selected.id} · {selected.source} · {query ? query.label : contrast.label}</span>
                 </h3>
                 <span className="text-sm text-slate-500">
                   {selected.count}/{selected.setSize} DEGs · ratio {(nDegInBg ? selected.count / nDegInBg : 0).toFixed(3)} · fold {selected.foldEnrichment.toFixed(1)}× · padj {fmtP(selected.padj, selected.nlpAdj)}
@@ -354,8 +438,13 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
               </div>
               <GeneStatTable rows={memberRows} contrast={contrast} totalRanked={totalRanked} onSelectGene={onSelectGene} />
               <p className="mt-2 text-xs text-slate-400">
-                Overlapping DEGs (padj ≤ {padjMax}, |log2FC| ≥ {lfcMin}) — all significant by construction.
-                <b> Combined</b> = −log10(p)×log2FC; <b>rank</b> = position among all {totalRanked.toLocaleString()} tested genes by combined score.
+                {query
+                  ? <>Overlapping genes from this selection. A wedge is assembled from several
+                    comparisons and has no single fold change, so <b>log2FC</b> and <b>padj</b> are
+                    the strongest evidence any of them gave the gene, and <b>rank</b> is its
+                    position among the {totalRanked.toLocaleString()} genes of the selection. </>
+                  : <>Overlapping DEGs (padj ≤ {padjMax}, |log2FC| ≥ {lfcMin}) — all significant by construction.
+                    <b> Combined</b> = −log10(p)×log2FC; <b>rank</b> = position among all {totalRanked.toLocaleString()} tested genes by combined score. </>}
               </p>
             </div>
           )}
@@ -366,7 +455,13 @@ function CustomORA({ bundle, contrast, library, onSelectGene }: Props) {
 }
 
 // ── shared bits ──────────────────────────────────────────────────────────────
-interface MemberRow { g: string; d: DEGRow | undefined; comb: number | null; rank: number | undefined }
+/**
+ * A row that MAY know which comparison it came from — one from a wedge does,
+ * one from this contrast's own table does not need to.
+ */
+type MaybeSourced = DEGRow & Partial<Pick<QueryRow, 'from' | 'up' | 'down'>>
+
+interface MemberRow { g: string; d: MaybeSourced | undefined; comb: number | null; rank: number | undefined }
 
 function GeneStatTable({ rows, contrast, totalRanked, onSelectGene }: {
   rows: MemberRow[]; contrast: Contrast; totalRanked: number; onSelectGene: (g: string) => void
@@ -396,7 +491,17 @@ function GeneStatTable({ rows, contrast, totalRanked, onSelectGene }: {
               <td className="px-3 py-1.5 text-right font-mono">{fmtP(d?.padj ?? null)}</td>
               <td className="px-3 py-1.5">
                 {d && d.padj != null && d.padj < thr
-                  ? <span className={`pill ${d.log2FoldChange > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{d.log2FoldChange > 0 ? `↑ ${contrast.numerator}` : `↑ ${contrast.denominator}`}</span>
+                  ? <span
+                      className={`pill ${d.log2FoldChange > 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}
+                      // A wedge's rows come from different comparisons, so the
+                      // group a positive fold change points at is the SOURCE
+                      // comparison's, never the one selected at the top of the
+                      // page. The row knows; the table asks it.
+                      title={d.from ? `from ${d.from}` : undefined}>
+                      ↑ {d.log2FoldChange > 0
+                        ? (d.up ?? contrast.numerator)
+                        : (d.down ?? contrast.denominator)}
+                    </span>
                   : <span className="pill bg-slate-100 text-slate-500 dark:bg-slate-700">n.s.</span>}
               </td>
             </tr>
@@ -469,8 +574,8 @@ function barLayout(n: number, label: string, metric: BarMetric) {
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
   }
 }
-function buildDegMap(rows: DEGRow[]) {
-  const m = new Map<string, DEGRow>()
+function buildDegMap(rows: MaybeSourced[]) {
+  const m = new Map<string, MaybeSourced>()
   for (const r of rows) { m.set(r.gene_id.toUpperCase(), r); if (r.gene_name) m.set(r.gene_name.toUpperCase(), r) }
   return m
 }
@@ -481,6 +586,10 @@ function buildRankMap(rows: DEGRow[]) {
   scored.forEach((s, i) => { rankMap.set(s.r.gene_id.toUpperCase(), i + 1); if (s.r.gene_name) rankMap.set(s.r.gene_name.toUpperCase(), i + 1) })
   return { rankMap, totalRanked: scored.length }
 }
+
+/** A wedge's name is prose; a filename is not. */
+const fileSlug = (s: string) =>
+  s.replace(/[^\w+-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'selection'
 
 const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
 // Word-wrap a long label to <=width per line (breaking on _ / - and spaces, hard-

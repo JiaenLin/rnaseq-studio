@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Direction, GeneMembership, OverlapSource, Region, Thresholds } from '../lib/venn'
-import {
-  DEFAULT_THRESHOLDS, MAX_SETS, VENN_MAX, VENN_SHAPES,
-  computeOverlap, overlapCsv, regionAnchors, regionLabel,
+import type {
+  Direction, GeneMembership, OverlapQuery, OverlapSource, Region, Thresholds,
 } from '../lib/venn'
+import {
+  DEFAULT_THRESHOLDS, MAX_SETS, OVERLAP_SOURCE, VENN_MAX, VENN_SHAPES,
+  computeOverlap, geneNamesOf, overlapCsv, overlapQuery, regionAnchors, regionLabel,
+  regionNames,
+} from '../lib/venn'
+import { collectionOf } from '../lib/msigdb.ts'
+import type { LibraryControl } from '../lib/genesets.ts'
 import { setColors } from '../lib/palette'
 import { reportOverlap, useReport } from '../lib/methods'
 
@@ -11,10 +16,16 @@ interface Props {
   sources: OverlapSource[]
   /** Whether this bundle can run new pairs, for the "get more comparisons" hint. */
   canCompute: boolean
+  /** The app's one gene-set library — a saved wedge becomes a collection in it. */
+  library: LibraryControl
+  /** Hand this wedge to the Enrichment tab as its query, and go there. */
+  onEnrich: (q: OverlapQuery) => void
   onSelectGene: (gene: string) => void
 }
 
 const MAX_ROWS = 300
+/** One frozen empty array, so "the whole figure" is referentially stable. */
+const EMPTY_MEMBERS: number[] = []
 
 /**
  * Where several comparisons agree, and where each is on its own.
@@ -26,13 +37,13 @@ const MAX_ROWS = 300
  * in one, and which move in opposite directions in the two. Answering that
  * meant exporting CSVs and opening Excel.
  */
-export default function Overlap({ sources, canCompute, onSelectGene }: Props) {
+export default function Overlap({ sources, canCompute, library, onEnrich, onSelectGene }: Props) {
   // Up to three by default: enough to be a real intersection, few enough that
   // the first paint is a diagram rather than a puzzle.
   const [picked, setPicked] = useState<string[]>(() => sources.slice(0, 3).map(s => s.key))
   const [thr, setThr] = useState<Thresholds>(DEFAULT_THRESHOLDS)
   const [mask, setMask] = useState<number | null>(null)
-  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState('')
   const svgRef = useRef<SVGSVGElement>(null)
   const dark = useDark()
 
@@ -91,9 +102,9 @@ export default function Overlap({ sources, canCompute, onSelectGene }: Props) {
 
   const shown = useMemo(() => {
     const genes = selected ? selected.genes : result.genes
-    const q = query.trim().toUpperCase()
+    const q = filter.trim().toUpperCase()
     return q ? genes.filter(g => g.label.toUpperCase().includes(q) || g.gene.toUpperCase().includes(q)) : genes
-  }, [selected, result.genes, query])
+  }, [selected, result.genes, filter])
 
   // Named for the figure, not for its contents: joining six comparison labels
   // produced a 130-character filename that no file dialog could show the end of.
@@ -102,6 +113,44 @@ export default function Overlap({ sources, canCompute, onSelectGene }: Props) {
     : `overlap_${chosen.length}_comparisons`
   const saveCsv = (genes: readonly GeneMembership[], suffix: string) =>
     download(overlapCsv(chosen, genes), `${stem}${suffix}.csv`, 'text/csv')
+
+  /**
+   * What the two buttons below act on: the selected wedge, or — when none is
+   * selected — every gene in the figure.
+   *
+   * The union is a selection in its own right and the one people reach for
+   * most ("everything this experiment moved, anywhere"), so it is not a
+   * degenerate case to be disabled; it gets its own name and its own id.
+   */
+  const targetGenes = selected ? selected.genes : result.genes
+  const naming = regionNames(selected ? selected.members : EMPTY_MEMBERS, chosen)
+  const [saved, setSaved] = useState<string | null>(null)
+  useEffect(() => { setSaved(null) }, [pickedKey, mask])
+
+  /**
+   * The wedge, as a gene set in the library.
+   *
+   * Merged into ONE collection rather than added as a new one each time, so
+   * saving four wedges gives four sets under a single removable heading instead
+   * of four headings — and re-saving a wedge replaces its set, because
+   * `collectionOf` is last-wins on the id and the id is stable.
+   */
+  const saveAsSet = () => {
+    const genes = geneNamesOf(targetGenes)
+    if (!genes.length) return
+    const mine = library.customSets.find(c => c.source === OVERLAP_SOURCE)
+    const defs = [
+      ...(mine ? mine.sets.map(x => ({
+        id: x.id, name: x.name, genes: Array.from(x.genes, i => mine.symbols[i]),
+      })) : []),
+      { id: naming.id, name: naming.name, genes },
+    ]
+    library.onCustomSets([
+      ...library.customSets.filter(c => c.source !== OVERLAP_SOURCE),
+      collectionOf(OVERLAP_SOURCE, `${chosen.length} comparisons`, defs),
+    ])
+    setSaved(naming.name)
+  }
 
   if (!sources.length) {
     return <Empty canCompute={canCompute} what="none" />
@@ -196,13 +245,33 @@ export default function Overlap({ sources, canCompute, onSelectGene }: Props) {
                 </p>
               </div>
               <input className="input ml-auto w-44 py-1" placeholder="Filter genes…"
-                value={query} onChange={e => setQuery(e.target.value)} />
+                value={filter} onChange={e => setFilter(e.target.value)} />
               {selected && <button className="btn py-1 text-xs" onClick={() => setMask(null)}>Show all</button>}
+              {/* The two things a gene list is FOR. Enrichment tests it against
+                  the library; saving makes it a set the rest of the app can
+                  score per sample and test like any other. */}
+              <button className="btn btn-primary py-1 text-xs" disabled={!targetGenes.length}
+                title={`Run over-representation analysis on these ${targetGenes.length} genes`}
+                onClick={() => onEnrich(overlapQuery(chosen, targetGenes, naming))}>
+                ⌕ Test for enrichment
+              </button>
+              <button className="btn py-1 text-xs" disabled={!targetGenes.length}
+                title="Add these genes to the gene-set library as a named set"
+                onClick={saveAsSet}>
+                ＋ Save as gene set
+              </button>
               <button className="btn py-1 text-xs"
                 onClick={() => saveCsv(shown, selected ? `_${slug(regionLabel(selected.members, chosen))}` : '_all')}>
                 ⭳ CSV
               </button>
             </div>
+            {saved && (
+              <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+                <b>“{saved}”</b> added to the gene-set library under “{OVERLAP_SOURCE}”. Score it per
+                sample on <b>Gene sets</b>, or edit and remove it under <b>Collections</b>.
+                {' '}Testing this same selection leaves it out of its own test.
+              </p>
+            )}
             <GeneTable sources={chosen} colors={colors} genes={shown} onSelectGene={onSelectGene} />
           </div>
         </>

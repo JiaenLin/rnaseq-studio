@@ -7,9 +7,11 @@
 // this layout was missing two of them and looked perfectly fine.
 
 import {
-  VENN_MAX, VENN_SHAPES, computeOverlap, maskMembers, overlapCsv, overlapSources,
-  regionAnchors, regionLabel, shapeContains, significantGenes,
+  OVERLAP_SOURCE, VENN_MAX, VENN_SHAPES, bestRows, computeOverlap, geneNamesOf, maskMembers,
+  overlapBackground, overlapCsv, overlapQuery, overlapSources, regionAnchors, regionLabel,
+  regionNames, shapeContains, significantGenes,
 } from '../src/lib/venn.ts'
+import { collectionOf } from '../src/lib/msigdb.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -208,6 +210,127 @@ console.log('\nWHAT THE TAB IS ALLOWED TO OFFER')
     })
   check('the exclusions are part of the name',
     excl.map(s => s.label), ['KO vs WT — without KO_3', 'KO vs WT — without 3 samples'])
+}
+
+console.log('\nA WEDGE, HANDED TO SOMETHING ELSE')
+{
+  const mk = (key, label, rows) => ({ key, label, numerator: 'T', denominator: 'C', origin: 'bundle', rows })
+  const sources = [
+    mk('c1', 'KO vs WT (cold)', [row('g1', 2, 1e-8, 'AAA'), row('g2', -3, 1e-4, 'BBB'), row('g9', 0.1, 0.9, 'ZZZ')]),
+    mk('c2', 'KO vs WT (warm)', [row('g1', 1.5, 1e-3, 'AAA'), row('g3', 2, 0.001, 'CCC'), row('g8', 0.1, 0.9, 'YYY')]),
+  ]
+  const r = computeOverlap(sources, THR)
+  const shared = r.byMask.get(0b11)
+
+  check('a wedge names the comparisons, not their indices',
+    regionNames(shared.members, sources).name, 'Shared by all 2: KO vs WT (cold) ∩ KO vs WT (warm)')
+  check('a lone wedge says which one it is',
+    regionNames([0], sources).name, 'Only KO vs WT (cold)')
+  check('the whole figure is a selection too, and says so',
+    regionNames([], sources).name, 'Significant in any of 2: KO vs WT (cold) ∪ KO vs WT (warm)')
+
+  // The short form exists because the long one wrapped a bar chart's y-axis
+  // onto three lines. Nothing that goes on a figure may grow with the labels.
+  const four = ['aa', 'bb', 'cc', 'dd'].map((k, i) =>
+    mk(k, `Comparison number ${i + 1} of this experiment`, []))
+  check('four comparisons do not make a four-line title',
+    regionNames([0, 1, 2, 3], four).short, 'Shared by all 4')
+  check('nor do two long ones', regionNames([0, 1], four).short, '2 of 4 comparisons')
+  // Two of three, with short labels, is named outright — it fits.
+  const three = ['a', 'b', 'c'].map(k => mk(k, `arm ${k}`, []))
+  check('a subset that fits is named outright', regionNames([0, 2], three).short, 'arm a ∩ arm c')
+  check('the whole figure, short', regionNames([], four).short, 'Any of 4 comparisons')
+
+  // The prose form completes "The 412 genes ___", which the other two do not:
+  // "the 73 genes differentially expressed in shared by all 4 comparisons" was
+  // the sentence the Methods tab produced before this existed.
+  const say = (m, src) => `The 73 genes ${regionNames(m, src).prose} were tested.`
+  check('all of them', say([0, 1, 2, 3], four),
+    'The 73 genes shared by all 4 comparisons were tested.')
+  check('one of them', say([0], sources),
+    'The 73 genes differentially expressed only in KO vs WT (cold) were tested.')
+  check('some of them', say([0, 1], four),
+    'The 73 genes shared by Comparison number 1 of this experiment and '
+    + 'Comparison number 2 of this experiment alone were tested.')
+  check('three of four', say([0, 1, 2], four),
+    'The 73 genes shared by Comparison number 1 of this experiment, '
+    + 'Comparison number 2 of this experiment and Comparison number 3 of this experiment '
+    + 'alone were tested.')
+  check('any of them', say([], four),
+    'The 73 genes differentially expressed in at least one of 4 comparisons were tested.')
+
+  // Stable, so saving the same wedge twice REPLACES its set rather than putting
+  // one gene list into the multiple-testing correction twice.
+  check('the id is stable', regionNames([0, 1], sources).id, regionNames([0, 1], sources).id)
+  check('every wedge has its own',
+    new Set([[0], [1], [0, 1], []].map(m => regionNames(m, sources).id)).size, 4)
+  // Different comparisons, same wedge number, must not collide.
+  const other = [sources[0], mk('c3', 'other', [row('g1', 2, 1e-8)])]
+  check('and so does the same wedge of a different figure',
+    regionNames([0, 1], sources).id === regionNames([0, 1], other).id, false)
+
+  // A wedge has no single fold change: it is assembled from several tables.
+  const best = bestRows(shared.genes, sources)
+  check('the drill-down carries the strongest evidence there was',
+    [best[0].gene_id, best[0].padj], ['g1', 1e-8])
+  check('under the name the diagram used', best[0].gene_name, 'AAA')
+  // ...and remembers WHERE it came from, because the group a positive log2FC
+  // points at belongs to that comparison and not to whichever one is selected
+  // at the top of the page.
+  check('and remembers which comparison gave it',
+    [best[0].from, best[0].up, best[0].down], ['KO vs WT (cold)', 'T', 'C'])
+  check('gene names come out as the app spells them', geneNamesOf(shared.genes), ['AAA'])
+
+  // The background is what the comparisons TESTED — not the wedge, and not the
+  // genome. Handing ORA the wedge as its own background makes everything hit.
+  const bg = overlapBackground(sources)
+  check('the background is every gene these comparisons tested',
+    bg.sort(), ['AAA', 'BBB', 'CCC', 'YYY', 'ZZZ'])
+  check('each gene once, however many tables carry it', bg.length, new Set(bg).size)
+
+  const q = overlapQuery(sources, shared.genes, regionNames(shared.members, sources))
+  check('the query carries the short name', q.label, 'Shared by all 2')
+  // Carried so the enrichment can leave a saved wedge out of its own test.
+  check('and the id it would have as a saved set',
+    q.setId, regionNames(shared.members, sources).id)
+  check('and the grammatical one', q.prose, 'shared by all 2 comparisons')
+  check('the query knows how many comparisons it came from', q.nSets, 2)
+  check('and carries a row per gene', q.rows.length, 1)
+  check('and a background bigger than itself', q.background.length > q.rows.length, true)
+}
+
+console.log('\nA WEDGE, AS A GENE SET IN THE LIBRARY')
+{
+  const c = collectionOf(OVERLAP_SOURCE, '2 comparisons', [
+    { id: 'W1', name: 'Only A', genes: ['AAA', 'BBB', 'AAA', ' ', 'CCC'] },
+    { id: 'W2', name: 'Shared', genes: ['BBB'] },
+  ])
+  check('it is an ordinary collection', [c.source, c.species, c.sets.length],
+    [OVERLAP_SOURCE, 'any', 2])
+  check('symbols are interned once across the collection', c.symbols, ['AAA', 'BBB', 'CCC'])
+  check('a repeated gene is one member, and blanks are dropped',
+    Array.from(c.sets[0].genes, i => c.symbols[i]), ['AAA', 'BBB', 'CCC'])
+
+  // Re-deriving a wedge must replace its set. Two sets with one id would be one
+  // gene list tested twice and corrected across twice.
+  const again = collectionOf(OVERLAP_SOURCE, 'x', [
+    { id: 'W1', name: 'Only A', genes: ['AAA'] },
+    { id: 'W1', name: 'Only A', genes: ['DDD', 'EEE'] },
+  ])
+  check('a repeated id replaces rather than duplicates', again.sets.length, 1)
+  check('and the last one wins',
+    Array.from(again.sets[0].genes, i => again.symbols[i]), ['DDD', 'EEE'])
+  check('the set keeps its position', collectionOf('s', 'r', [
+    { id: 'A', name: 'a', genes: ['X'] },
+    { id: 'B', name: 'b', genes: ['Y'] },
+    { id: 'A', name: 'a', genes: ['Z'] },
+  ]).sets.map(x => x.id), ['A', 'B'])
+
+  // A name with a colon is why this does not go through parseSets: that format
+  // is `Name: gene, gene`, and a contrast named after a model coefficient has
+  // a colon of its own.
+  const colon = collectionOf('s', 'r', [{ id: 'I', name: 'KO:Warm vs interaction', genes: ['X'] }])
+  check('a name with a colon survives', colon.sets[0].name, 'KO:Warm vs interaction')
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll Venn/overlap tests passed\n')

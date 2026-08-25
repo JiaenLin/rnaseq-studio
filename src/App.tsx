@@ -4,7 +4,7 @@ import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, sideLabel } from './lib/design'
 import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
 import { auditBundle, comparisonKey, comparisonState, relevantExclusions } from './lib/contrast'
-import type { ComputedRun } from './lib/venn'
+import type { ComputedRun, OverlapQuery } from './lib/venn'
 import { overlapSources } from './lib/venn'
 import ComparisonBar from './components/ComparisonBar'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
@@ -73,6 +73,16 @@ export default function App() {
    */
   const [computedRuns, setComputedRuns] = useState<Record<string, ComputedRun>>({})
   /**
+   * A gene list the Enrichment tab is testing instead of this contrast's DEGs.
+   *
+   * Set by the Overlap tab, which is the only place a list like that can be
+   * assembled — a wedge is drawn from several comparisons and belongs to none
+   * of them. Held here rather than inside Enrichment for the reason `geneText`
+   * and the library are: the tab unmounts when you leave it, and losing the
+   * selection you came there to test would be the whole point thrown away.
+   */
+  const [geneQuery, setGeneQuery] = useState<OverlapQuery | null>(null)
+  /**
    * The run, and which pair it belongs to.
    *
    * `runLog` used to be one string for the whole app and was never cleared, so
@@ -98,6 +108,7 @@ export default function App() {
     // Another bundle's runs are another dataset's genes.
     setComputed({})
     setComputedRuns({})
+    setGeneQuery(null)
     setRun({ pair: '', running: false, log: '' })
     setGene(null)
     setGeneText('')
@@ -151,6 +162,8 @@ export default function App() {
   }
 
   const pickGene = (g: string) => { setGene(g); setTab('expression') }
+  /** A wedge, handed to Enrichment. The tab switch is the point of the button. */
+  const enrichQuery = (q: OverlapQuery) => { setGeneQuery(q); setTab('enrichment') }
 
   /* Every comparison this bundle can offer, and the one on screen.
    *
@@ -411,11 +424,22 @@ export default function App() {
                 must not blank it. */}
             {tab === 'overlap' && (
               <Overlap sources={overlapCatalog} canCompute={!!bundle.rawCounts}
-                onSelectGene={pickGene} />
+                library={library} onEnrich={enrichQuery} onSelectGene={pickGene} />
             )}
             {/* Everything below is statistics. With none for this pair, showing
                 anything at all would be showing another comparison's numbers. */}
-            {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap' && pending && (
+            {/* A wedge carries its own genes and its own background, so the
+                Enrichment tab has everything it needs even when the pair
+                selected above has no result — and that is exactly the state
+                somebody is in right after running the second comparison they
+                wanted to intersect. */}
+            {tab === 'enrichment' && geneQuery && (
+              <Enrichment bundle={viewBundle!} contrast={contrast} library={library}
+                query={geneQuery} onClearQuery={() => setGeneQuery(null)}
+                onSelectGene={pickGene} />
+            )}
+            {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap'
+              && !(tab === 'enrichment' && geneQuery) && pending && (
               <NeedsStats
                 contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}
                 runLog={myRun.log} withheld={state?.staleExclusions ?? []} onRun={runPair} />
@@ -426,7 +450,7 @@ export default function App() {
                   <Volcano bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
                 {tab === 'degs' &&
                   <DEGTable bundle={viewBundle!} contrast={contrast} onSelectGene={pickGene} />}
-                {tab === 'enrichment' &&
+                {tab === 'enrichment' && !geneQuery &&
                   <Enrichment bundle={viewBundle!} contrast={contrast} library={library}
                     onSelectGene={pickGene} />}
                 {tab === 'geneset' &&

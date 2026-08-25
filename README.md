@@ -26,7 +26,10 @@ sets. Everything runs client-side — **your data never leaves your device** (no
   clickable — the genes in exactly those comparisons and no others — with each gene's log2FC and
   padj side by side per comparison, so on a 2×2 you can read off what a treatment does in both
   backgrounds, what is unique to one, and (with **same direction only**) which "shared" genes are
-  actually moving opposite ways. Exports to PNG, SVG and CSV.
+  actually moving opposite ways. Exports to PNG, SVG and CSV. Any wedge converts into a gene set:
+  **Test for enrichment** runs ORA on it against MSigDB (with the genes those comparisons tested
+  as the background), and **Save as gene set** adds it to the library, where it is scored per
+  sample and tested exactly like a pasted one.
 - **Enrichment** — live, tunable over-representation analysis (ORA) against **the whole of
   MSigDB**, human and mouse, fetched a collection at a time: set your padj / log2FC / direction
   and watch enriched pathways update; drill into a term's genes and their stats; export every

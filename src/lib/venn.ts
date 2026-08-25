@@ -447,3 +447,211 @@ export function overlapSources(
   }
   return out
 }
+
+/* ──────────────────── a wedge, as something else can use ──────────────────── */
+
+/** Where a derived set is filed, so re-deriving one replaces it. */
+export const OVERLAP_SOURCE = 'From the Overlap tab'
+
+/**
+ * The same wedge, said four ways.
+ *
+ * One function rather than four call sites deciding for themselves, because
+ * they had started to: a gene set in the library, a plot title, a filename and
+ * a Methods sentence need different lengths AND different grammar, and the
+ * first version used the library name everywhere. That put
+ * "Shared by all 4: KO vs WT (cold) ∩ KO vs WT (warm) ∩ Cold vs warm (WT) ∩
+ * Cold vs warm (KO)" on a bar chart's y-axis, where it wrapped to three lines,
+ * and into a sentence as "the 73 genes differentially expressed in shared by
+ * all 4 comparisons of 4 comparisons".
+ *
+ * An empty `members` means the whole figure — every gene significant in at
+ * least one comparison. It is a selection people reach for as often as any
+ * single wedge, so it is named here rather than special-cased by the caller.
+ */
+export interface RegionNaming {
+  /**
+   * Stable id, so saving the same wedge twice REPLACES its set rather than
+   * putting one gene list into the multiple-testing correction twice. The hash
+   * is over the source keys, so "the first two of these four comparisons" and
+   * "the first two of those four" are different sets though both are wedge 3.
+   */
+  id: string
+  /**
+   * Self-describing, for the library. Names the comparisons rather than their
+   * indices: a set called "1 ∩ 3" means nothing beside HALLMARK_HYPOXIA, and
+   * nothing again tomorrow.
+   */
+  name: string
+  /** Short enough for a plot title, a banner and a filename. */
+  short: string
+  /** A noun phrase completing "The 412 genes ___". */
+  prose: string
+}
+
+/** Past this a joined list of comparison names stops being a label. */
+const SHORT_MAX = 44
+
+export function regionNames(
+  members: readonly number[], sources: readonly OverlapSource[],
+): RegionNaming {
+  const n = sources.length
+  const labels = members.map(i => sources[i]?.label ?? '?')
+  const all = members.length === n && n > 1
+  const any = members.length === 0
+  const joined = labels.join(' ∩ ')
+
+  let h = 2166136261
+  for (const s of sources) {
+    for (let i = 0; i < s.key.length; i++) {
+      h ^= s.key.charCodeAt(i)
+      h = Math.imul(h, 16777619)
+    }
+    h ^= 47
+  }
+  const which = members.length ? members.map(i => i + 1).join('-') : 'ANY'
+
+  return {
+    id: `OVERLAP_${which}_OF_${n}_${(h >>> 0).toString(36)}`,
+    name: any ? `Significant in any of ${n}: ${sources.map(s => s.label).join(' ∪ ')}`
+      : all ? `Shared by all ${n}: ${joined}`
+        : members.length === 1 ? `Only ${labels[0]}`
+          : `${joined} only`,
+    short: any ? `Any of ${n} comparisons`
+      : all ? `Shared by all ${n}`
+        : members.length === 1 ? `Only ${trunc(labels[0], SHORT_MAX - 5)}`
+          : joined.length <= SHORT_MAX ? joined
+            : `${members.length} of ${n} comparisons`,
+    prose: any ? `differentially expressed in at least one of ${n} comparisons`
+      : all ? `shared by all ${n} comparisons`
+        : members.length === 1
+          ? `differentially expressed only in ${labels[0]}`
+            // "shared by A and B alone" rather than "...and in none of the other
+            // 2 comparisons", which put nine words between the subject and its
+            // verb and made the sentence unreadable at exactly the point where
+            // it says what was tested.
+          : `shared by ${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]} alone`,
+  }
+}
+
+const trunc = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`)
+
+/** The gene names a wedge holds, as the rest of the app spells them. */
+export const geneNamesOf = (genes: readonly GeneMembership[]): string[] =>
+  genes.map(g => g.label || g.gene)
+
+/**
+ * Every gene the comparisons in the figure TESTED — the enrichment background.
+ *
+ * Not the genome and not the union of the wedges. A wedge was drawn from the
+ * genes these comparisons could have called significant, so that is the
+ * population an over-representation test has to divide by; handing ORA the
+ * wedge itself as its own background would make every set it touches look
+ * enriched.
+ *
+ * The union across the chosen comparisons rather than the intersection: the
+ * tables of one bundle differ only where independent filtering dropped a gene
+ * from one of them, and treating that as "never measured" would shrink N for a
+ * reason that has nothing to do with the biology.
+ */
+export function overlapBackground(sources: readonly OverlapSource[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const s of sources) {
+    for (const r of s.rows) {
+      const g = r.gene_name || r.gene_id
+      if (!seen.has(g)) { seen.add(g); out.push(g) }
+    }
+  }
+  return out
+}
+
+/**
+ * The strongest row a gene has among the comparisons that put it in the wedge.
+ *
+ * A wedge is a gene list assembled from several tables, so it has no single
+ * log2FC or padj. Rather than pick a comparison arbitrarily, or show nothing,
+ * the drill-down carries the best evidence there was — and the interface says
+ * that is what it is.
+ */
+export function bestRows(
+  genes: readonly GeneMembership[], sources: readonly OverlapSource[],
+): QueryRow[] {
+  const out: QueryRow[] = []
+  for (const g of genes) {
+    let best: DEGRow | null = null
+    let at = -1
+    for (let i = 0; i < g.rows.length; i++) {
+      const r = g.rows[i]
+      if (!r) continue
+      if (!best || (r.padj ?? 1) < (best.padj ?? 1)) { best = r; at = i }
+    }
+    if (!best) continue
+    const src = sources[at]
+    out.push({
+      // The label the diagram used, not whichever table won — the two can
+      // differ when only one source carries symbols.
+      ...best, gene_name: g.label || g.gene,
+      from: src?.label ?? '?',
+      up: src?.numerator ?? '?',
+      down: src?.denominator ?? '?',
+    })
+  }
+  return out
+}
+
+/**
+ * A DEG row that remembers which comparison it came from.
+ *
+ * A wedge is assembled from several tables, so the sign of its log2FC points at
+ * a different group for different genes. The enrichment drill-down was labelling
+ * every one of them with the group names of whatever contrast happened to be
+ * selected in the bar at the top of the page — a gene whose evidence came from
+ * "Cold vs warm (WT)" was captioned "up in KO_Cold". The row carries its own
+ * answer rather than the table guessing.
+ */
+export interface QueryRow extends DEGRow {
+  /** The comparison this row came from. */
+  from: string
+  /** The group a positive log2FC points towards, in THAT comparison. */
+  up: string
+  /** And a negative one. */
+  down: string
+}
+
+/** A wedge handed to the Enrichment tab as its query. */
+export interface OverlapQuery {
+  /** Short form — the banner, the plot title and the export filenames. */
+  label: string
+  /** Noun phrase for the Methods sentence. */
+  prose: string
+  /** How many comparisons it came from. */
+  nSets: number
+  /**
+   * The id this selection has if it was also SAVED as a gene set.
+   *
+   * Carried so the enrichment can leave that set out of its own test. Testing a
+   * gene list against a set that is the same gene list is not a test: it
+   * reports a perfect overlap at an astronomical p-value, tops every chart, and
+   * pushes real hits down the ranking — observed at ratio 1.000, fold 18.9x,
+   * padj 9e-122 the first time somebody saved a wedge and then tested it.
+   */
+  setId: string
+  rows: QueryRow[]
+  background: string[]
+}
+
+export function overlapQuery(
+  sources: readonly OverlapSource[],
+  genes: readonly GeneMembership[],
+  naming: RegionNaming,
+): OverlapQuery {
+  return {
+    label: naming.short,
+    prose: naming.prose,
+    nSets: sources.length,
+    setId: naming.id,
+    rows: bestRows(genes, sources),
+    background: overlapBackground(sources),
+  }
+}
