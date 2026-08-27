@@ -283,15 +283,62 @@ export function oraIndexed(
  */
 export const ORA_CUT = -Math.log10(0.05)
 
+/**
+ * Ceilings the ramp is allowed to take.
+ *
+ * A LADDER rather than the data's own maximum, and that is the whole point. A
+ * fitted ceiling means the top bar is the reddest thing on every figure whatever
+ * its p-value, and a fitted floor means the palest is the palest whatever its
+ * p-value — so a shade meant one thing in one figure and another in the next,
+ * and two enrichment figures from the same study could not be read against each
+ * other. On a rung, colour and value are the same relationship in every figure.
+ *
+ * The FIRST rung is 5 — padj 1e−5 — and not something tighter, because a
+ * quantised ceiling can inverse the ordering across a rung and the first rung is
+ * where that would bite. With rungs starting at 2, a page whose best term is
+ * padj 0.01 fills the ramp and comes out dark red, while a page whose best is
+ * 1e−3 lands on the next rung at 60% and comes out ORANGE: ten times the
+ * evidence, drawn paler. At 5 every ordinary enrichment run — anything not
+ * reaching 1e−5 — shares one scale, so the ordering holds and the figures are
+ * identical rather than merely comparable.
+ *
+ * 300 is the last rung because −log10 of the smallest double is about 308; a
+ * value past it is at the underflow limit and clamping it costs nothing.
+ */
+const CEILINGS = [5, 10, 25, 50, 100, 300]
+
+/**
+ * The colour scale, anchored rather than fitted.
+ *
+ * The floor is 0 — padj = 1, no evidence at all — always. It used to be the
+ * smallest value present, which made the palest colour mean "the least
+ * significant term HERE": padj 0.9 on one page and padj 1e-4 on another, both
+ * drawn in the same yellow.
+ *
+ * "A page where nothing is significant must not look significant" survives, and
+ * is now a consequence rather than a special case: the lowest rung is 5 and the
+ * 0.05 line sits at 1.3, so a page whose best term is not significant sits in
+ * the bottom quarter of the ramp and cannot look like anything else.
+ */
 export function oraColorDomain(nlps: readonly number[]): { lo: number; hi: number } {
-  if (!nlps.length) return { lo: 0, hi: ORA_CUT * 1.2 }
-  let lo = Infinity
-  let hi = -Infinity
-  for (const v of nlps) {
-    if (!Number.isFinite(v)) continue
-    if (v < lo) lo = v
-    if (v > hi) hi = v
-  }
-  if (!Number.isFinite(lo)) return { lo: 0, hi: ORA_CUT * 1.2 }
-  return { lo, hi: Math.max(ORA_CUT * 1.2, hi) }
+  let hi = 0
+  for (const v of nlps) if (Number.isFinite(v) && v > hi) hi = v
+  return { lo: 0, hi: CEILINGS.find(c => c >= hi) ?? CEILINGS[CEILINGS.length - 1] }
+}
+
+/**
+ * Colour-bar ticks in the units a reader thinks in.
+ *
+ * The bar was labelled "−log10 p.adjust" and ticked 0.8, 0.9, 1.0 … which is a
+ * quantity nobody quotes and, on a fitted scale, a different quantity per
+ * figure. Landmarks at the p-values people actually name, so the ramp explains
+ * itself whatever rung it is on and 0.05 is always findable on it.
+ */
+export function oraColorTicks(hi: number): { tickvals: number[]; ticktext: string[] } {
+  const marks: [number, string][] = [
+    [0, '1'], [ORA_CUT, '0.05'], [2, '0.01'], [3, '1e−3'], [5, '1e−5'],
+    [10, '1e−10'], [25, '1e−25'], [50, '1e−50'], [100, '1e−100'], [300, '1e−300'],
+  ]
+  const keep = marks.filter(([v]) => v <= hi)
+  return { tickvals: keep.map(m => m[0]), ticktext: keep.map(m => m[1]) }
 }

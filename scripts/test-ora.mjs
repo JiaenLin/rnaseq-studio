@@ -5,7 +5,7 @@
 // space, and there is a second, indexed implementation of the same test that
 // has to agree with the reference exactly.
 
-import { bh, bhNlp, hyperTail, logHyperTail, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
+import { ORA_CUT, bh, bhNlp, hyperTail, logHyperTail, oraColorDomain, oraColorTicks, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
 import { indexFor, parseSets } from '../src/lib/msigdb.ts'
 import { tickLabels, tickRows, wrapLabel } from '../src/lib/labels.ts'
 import { detectSpecies, speciesOfMeta } from '../src/lib/species.ts'
@@ -198,6 +198,50 @@ console.log('\nA BAR CHART\u2019S TICK LABELS')
     ticks.map(t => t.replace(/\u200B/g, '')), [ticks[0], ticks[0]])
   check('a name repeated outright is still two categories',
     new Set(tickLabels(['Cell cycle', 'Cell cycle'])).size, 2)
+}
+
+console.log('\nONE COLOUR MEANS ONE P-VALUE, ON EVERY FIGURE')
+{
+  // The floor was the smallest value PRESENT, so the palest colour meant "the
+  // least significant term here" — padj 0.9 on one page and padj 1e-4 on the
+  // next, both drawn in the same yellow, and no two figures readable against
+  // each other.
+  check('the floor is no evidence at all, always', oraColorDomain([0.8, 0.9, 1.5]).lo, 0)
+  check('however strong the page is', oraColorDomain([40, 41, 42]).lo, 0)
+  check('and an empty page still has a domain', oraColorDomain([]), { lo: 0, hi: 5 })
+
+  // The ceiling is a ladder, so two figures whose strongest terms land on the
+  // same rung are not merely comparable but identical.
+  check('a weak page and a slightly less weak one share a scale',
+    oraColorDomain([0.4, 1.1]).hi, oraColorDomain([1.9, 0.2]).hi)
+  check('rungs', [1.9, 5, 5.1, 9, 26, 400].map(v => oraColorDomain([v]).hi),
+    [5, 5, 10, 10, 50, 300])
+  // The reason the first rung is 5. On rungs starting at 2 these two inverted:
+  // padj 0.01 filled its ramp and came out darker than padj 1e−3 on the next.
+  const a = oraColorDomain([2]), bb = oraColorDomain([3])
+  check('more evidence is never drawn paler', 2 / a.hi < 3 / bb.hi, true)
+  check('because ordinary pages share one scale', a.hi, bb.hi)
+  // −log10 of the smallest double is about 308: past the last rung is the
+  // underflow limit, and clamping there costs nothing.
+  check('nothing runs off the end', oraColorDomain([1e9]).hi, 300)
+  check('a non-finite value is not a ceiling', oraColorDomain([Infinity, 3]).hi, 5)
+
+  // The property the old fitted scale had to special-case, now a consequence:
+  // the lowest rung is 2 and the 0.05 line is at 1.3, so a page whose best term
+  // is not significant cannot reach the top of the ramp.
+  const weak = oraColorDomain([0.3, 0.9, 1.2])
+  check('nothing significant cannot look significant', 1.2 / weak.hi < 0.3, true)
+
+  // The bar is ticked in the units people quote, not in −log10 steps.
+  const t = oraColorTicks(oraColorDomain([1.2]).hi)
+  check('a weak page still shows where 0.05 is', t.ticktext, ['1', '0.05', '0.01', '1e−3', '1e−5'])
+  check('at the right place', t.tickvals[1], ORA_CUT)
+  // A best term at 1e−30 lands on the 50 rung, so the bar is labelled up to it.
+  check('a strong page reaches further',
+    oraColorTicks(oraColorDomain([30]).hi).ticktext,
+    ['1', '0.05', '0.01', '1e−3', '1e−5', '1e−10', '1e−25', '1e−50'])
+  check('and never past its own ceiling',
+    oraColorTicks(5).tickvals.every(v => v <= 5), true)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll ORA tests passed\n')
