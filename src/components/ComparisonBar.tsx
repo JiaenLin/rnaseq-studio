@@ -2,7 +2,8 @@ import type { Bundle } from '../types'
 import type { ComparisonState } from '../lib/contrast'
 import type { GroupSel } from '../lib/design'
 import { conditionSizes } from '../lib/contrast'
-import { sideLabel } from '../lib/design'
+import { displayOrder, sideLabel } from '../lib/design'
+import { moveItem } from '../lib/order'
 
 /**
  * Pick both sides. Whether the answer already exists is a property of it.
@@ -48,7 +49,7 @@ export default function ComparisonBar({
     const strip = (xs: string[]) => xs.filter(g => g !== group)
     const next: GroupSel = {
       control: strip(sel.control), test: strip(sel.test), extra: strip(sel.extra),
-      excluded: sel.excluded,
+      order: sel.order, excluded: sel.excluded,
     }
     next[side] = [...next[side], group]
     onSel(next)
@@ -87,6 +88,12 @@ export default function ComparisonBar({
           {running && <span className="text-xs text-slate-400">{runLog}</span>}
         </div>
       </div>
+
+      {/* The order every figure draws these in. Here rather than on a tab
+          because it moves all of them at once, and a control that lives on one
+          figure is a setting you change in one place and go somewhere else to
+          see. Collapsed, because most bundles never need it. */}
+      <GroupOrder sel={sel} onSel={onSel} />
 
       <p className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-500 dark:border-slate-700">
         <b>{sideLabel(sel.test)}</b> vs <b>{sideLabel(sel.control)}</b>
@@ -133,6 +140,54 @@ export default function ComparisonBar({
         <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{runLog}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * The order the groups are drawn in, for every figure at once.
+ *
+ * Up and down rather than drag. A drag target is a mouse-only affordance and
+ * these are buttons a keyboard reaches; with the four or five arms a real design
+ * has, two clicks put any group anywhere.
+ */
+function GroupOrder({ sel, onSel }: { sel: GroupSel; onSel: (next: GroupSel) => void }) {
+  const shown = displayOrder(sel)
+  if (shown.length < 3) return null      // two groups have one sensible order
+
+  const move = (from: number, to: number) => {
+    const next = moveItem(shown, from, to)
+    if (next !== shown) onSel({ ...sel, order: next })
+  }
+
+  return (
+    <details className="mt-2 border-t border-slate-200 pt-2 dark:border-slate-700">
+      <summary className="cursor-pointer text-xs text-slate-500 hover:text-indigo-600">
+        Figure order{sel.order.length > 0 && <span className="ml-1 text-indigo-500">·</span>}
+        <span className="ml-1.5 text-slate-400">{shown.join(' → ')}</span>
+      </summary>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {shown.map((g, i) => (
+          <span key={g}
+            className="flex items-center gap-0.5 rounded-md border border-slate-200 bg-white pl-2 text-xs dark:border-slate-700 dark:bg-slate-800">
+            <span className="mr-0.5">{g}</span>
+            <button className="pressable px-1 py-0.5 text-slate-400 hover:text-indigo-600 disabled:opacity-30"
+              disabled={i === 0} aria-label={`Move ${g} earlier`} title="Move earlier"
+              onClick={() => move(i, i - 1)}>←</button>
+            <button className="pressable px-1 py-0.5 pr-1.5 text-slate-400 hover:text-indigo-600 disabled:opacity-30"
+              disabled={i === shown.length - 1} aria-label={`Move ${g} later`} title="Move later"
+              onClick={() => move(i, i + 1)}>→</button>
+          </span>
+        ))}
+        <button className="btn ml-1 py-0.5 text-xs" disabled={!sel.order.length}
+          onClick={() => onSel({ ...sel, order: [] })}>
+          Bundle order
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-slate-400">
+        Every figure that splits by group follows this. Nothing is recomputed — Control and
+        Compare are chosen by name and do not move.
+      </p>
+    </details>
   )
 }
 

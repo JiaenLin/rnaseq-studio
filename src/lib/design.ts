@@ -19,6 +19,7 @@
 // here (see lib/deseq.ts).
 
 import type { BundleMeta, Contrast, SampleRow } from '../types'
+import { orderedBy } from './order.ts'
 
 export interface GroupSel {
   /**
@@ -37,6 +38,20 @@ export interface GroupSel {
    */
   extra: string[]
   /**
+   * The order the groups are DRAWN in, when the reader has chosen one.
+   *
+   * Empty means "however the sides arrange them", which is the default below.
+   * A view setting, sitting here rather than in App for the reason scrnaseq's
+   * order does: every figure already receives `sel`, so one field moves all of
+   * them at once and no component has to learn that this exists.
+   *
+   * It is deliberately NOT read by anything that computes: `comparisonKey`,
+   * `comparisonState` and the DESeq2 request all take the group names on each
+   * side explicitly, never this array, so reordering cannot invalidate a result
+   * or quietly change one.
+   */
+  order: string[]
+  /**
    * Samples taken out of the analysis entirely, by name.
    *
    * A failed library or an animal that turned out to be the wrong genotype is
@@ -46,7 +61,7 @@ export interface GroupSel {
   excluded: string[]
 }
 
-export const emptySel = (): GroupSel => ({ control: [], test: [], extra: [], excluded: [] })
+export const emptySel = (): GroupSel => ({ control: [], test: [], extra: [], order: [], excluded: [] })
 
 /**
  * The contrast to open on: one with a table, and with the DECLARED reference.
@@ -88,13 +103,22 @@ export function defaultSelection(meta: BundleMeta, contrast?: Contrast): GroupSe
     control: control ? [control] : [],
     test,
     extra: meta.conditions.filter(c => c !== control && !test.includes(c)),
+    order: [],
     excluded: [],
   }
 }
 
-/** Display order: control first, then the compared arms, then the rest. */
+/**
+ * The order the groups are drawn in.
+ *
+ * Control, then the compared arms, then the rest — unless the reader has said
+ * otherwise, in which case their order wins for the groups it names and the
+ * default arrangement holds the rest. See lib/order.ts.
+ */
 export const displayOrder = (sel: GroupSel): string[] =>
-  [...sel.control, ...sel.test, ...sel.extra].filter((c, i, a) => c && a.indexOf(c) === i)
+  orderedBy(
+    [...sel.control, ...sel.test, ...sel.extra].filter((c, i, a) => c && a.indexOf(c) === i),
+    sel.order)
 
 /** The groups the comparison is actually between — control and test only. */
 export const comparedGroups = (sel: GroupSel): string[] =>
