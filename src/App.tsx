@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
-import { defaultSelection, emptySel, sideLabel } from './lib/design'
+import { defaultSelection, emptySel, openingContrast, sideLabel } from './lib/design'
 import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
 import { auditBundle, comparisonKey, comparisonState, relevantExclusions } from './lib/contrast'
 import type { ComputedRun, OverlapQuery } from './lib/venn'
@@ -107,7 +107,7 @@ export default function App() {
     // The comparison is chosen from what the bundle can actually offer, not
     // from meta.contrasts[0] alone — a bundle that exported no contrast at all
     // still opens on a pair it could compute rather than on nothing.
-    setSel(defaultSelection(b.meta, b.meta.contrasts.find(c => c.kind !== 'interaction')))
+    setSel(defaultSelection(b.meta, openingContrast(b.meta)))
     // Another bundle's runs are another dataset's genes.
     setComputed({})
     setComputedRuns({})

@@ -6,7 +6,7 @@
 // matched meta.conditions and those samples vanished from every plot without
 // any error. Identifiers must stay text; only numeric columns get coerced.
 import { assemble } from '../src/lib/bundle.ts'
-import { defaultSelection, displayOrder, orderSamples, samplesInGroups } from '../src/lib/design.ts'
+import { defaultSelection, displayOrder, openingContrast, orderSamples, samplesInGroups } from '../src/lib/design.ts'
 import { computedContrastId, countSignificant, isComputedContrast, namesOf, withSymbols } from '../src/lib/deseq.ts'
 
 let failed = 0
@@ -168,6 +168,40 @@ console.log('\nDESeq2 CONTRAST HELPERS')
   check('a large fold change with no padj does not count',
     countSignificant([rows[3]]), 0)
   check('thresholds are respected', countSignificant(rows, 1e-5, 1), 1)
+}
+
+console.log('\nTHE PAIR A BUNDLE OPENS ON')
+{
+  // A 2x2 exported with Ctrl_Thermo as its reference used to open on Ctrl_Cold,
+  // because the opening pair was "the first pairwise contrast" and the exporter
+  // writes those by walking each factor's levels in the order the sample names
+  // happened to be in. The reader's declared reference was on screen two cards
+  // away, saying something else.
+  const meta = {
+    schema: 1, project: 'p', species: 'mouse', created: '2026-01-01', engine: 'webr-limma-voom',
+    control: 'Ctrl_Thermo', gene_id_type: 'symbol', counts_unit: 'x',
+    conditions: ['Ctrl_Cold', 'Ctrl_Thermo', 'KO_Cold', 'KO_Thermo'],
+    contrasts: [
+      { id: 'a', numerator: 'KO_Cold', denominator: 'Ctrl_Cold', label: 'KO vs Ctrl (at Cold)', kind: 'pairwise', deg_file: 'a.csv' },
+      { id: 'b', numerator: 'KO_Thermo', denominator: 'Ctrl_Thermo', label: 'KO vs Ctrl (at Thermo)', kind: 'pairwise', deg_file: 'b.csv' },
+      { id: 'c', numerator: 'Ctrl_Cold', denominator: 'Ctrl_Thermo', label: 'Cold vs Thermo (at Ctrl)', kind: 'pairwise', deg_file: 'c.csv' },
+      { id: 'i', numerator: 'KO:Cold', denominator: 'interaction', label: 'Interaction', kind: 'interaction', deg_file: 'i.csv' },
+    ],
+  }
+  check('it opens on the declared reference', openingContrast(meta).denominator, 'Ctrl_Thermo')
+  check('on a contrast that has a table', openingContrast(meta).id, 'b')
+  check('and the selection follows', defaultSelection(meta, openingContrast(meta)).control, ['Ctrl_Thermo'])
+
+  // Never an interaction: it names coefficients rather than groups, so nothing
+  // per-sample can be drawn for it.
+  check('an interaction is never the opening pair',
+    openingContrast({ ...meta, contrasts: [meta.contrasts[3], meta.contrasts[0]] }).kind, 'pairwise')
+
+  // A control no contrast uses still has to open on something real.
+  check('an unmatched control falls back to a pairwise contrast',
+    openingContrast({ ...meta, control: 'Nobody' }).id, 'a')
+  check('and no pairwise contrast at all is undefined, not a crash',
+    openingContrast({ ...meta, contrasts: [meta.contrasts[3]] }), undefined)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll bundle tests passed\n')

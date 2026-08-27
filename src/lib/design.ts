@@ -48,6 +48,25 @@ export interface GroupSel {
 
 export const emptySel = (): GroupSel => ({ control: [], test: [], extra: [], excluded: [] })
 
+/**
+ * The contrast to open on: one with a table, and with the DECLARED reference.
+ *
+ * "The first pairwise contrast" landed on whichever the exporter wrote first,
+ * which on a factorial design is the first level of the second factor and not
+ * anything the reader chose. A 2x2 exported with Ctrl_Thermo as its reference
+ * opened on Ctrl_Cold — the same complaint the lab's own meta.control had, one
+ * app further on.
+ *
+ * `meta.control` first, then any pairwise contrast, because opening on the
+ * declared reference is worth nothing if that pair has no results behind it.
+ * Interactions are skipped throughout: they name coefficients rather than
+ * groups, so nothing per-sample can be drawn for them.
+ */
+export function openingContrast(meta: BundleMeta): Contrast | undefined {
+  const pairwise = meta.contrasts.filter(c => c.kind !== 'interaction')
+  return pairwise.find(c => c.denominator === meta.control) ?? pairwise[0]
+}
+
 /** Everything shown, with the active contrast's denominator as the reference. */
 export function defaultSelection(meta: BundleMeta, contrast?: Contrast): GroupSel {
   const control = contrast?.denominator || meta.control || meta.conditions[0] || ''
