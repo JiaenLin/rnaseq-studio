@@ -31,8 +31,13 @@
  * Returns the ORIGINAL array when the result would equal it, so an unreordered
  * selection stays referentially identical and every memo keyed on it holds.
  */
-export function orderedBy(all: readonly string[], order: readonly string[]): string[] {
-  if (!order.length) return all as string[]
+export function orderedBy(all: readonly string[], order?: readonly string[]): string[] {
+  // Optional at the boundary, not just empty-able. `order` is a view setting
+  // added to a shape that already existed, so a GroupSel built before it — a
+  // literal in a test, a selection restored from somewhere — reaches here with
+  // it undefined, and throwing takes out every figure that splits by group.
+  // The absence of an order and an empty one mean exactly the same thing.
+  if (!order?.length) return all as string[]
   const rank = new Map<string, number>()
   order.forEach((name, i) => { if (!rank.has(name)) rank.set(name, i) })
   const out = all

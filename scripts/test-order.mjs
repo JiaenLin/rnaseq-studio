@@ -41,6 +41,21 @@ console.log('\nORDEREDBY')
     orderedBy(all, ['6h', '6h']), ['6h', '0h', '24h', '72h'])
 }
 
+console.log('\nA SELECTION FROM BEFORE THIS EXISTED')
+{
+  // `order` was added to a shape that already existed, so something can reach
+  // here without it. Throwing on that blanks every figure that splits by group,
+  // and it is not hypothetical: it took out the whole test suite the first time
+  // this shipped, from one sel literal in another test file that predated the
+  // field. The absence of an order means what an empty one means.
+  const all = ['WT', 'KO', 'DKO']
+  check('no order at all is the bundle’s order', orderedBy(all, undefined), all)
+  check('and the same array, so nothing rebuilds', orderedBy(all, undefined) === all, true)
+  const legacy = { control: ['WT'], test: ['KO'], extra: ['DKO'], excluded: [] }
+  check('a selection with no order still draws every group',
+    displayOrder(legacy), ['WT', 'KO', 'DKO'])
+}
+
 console.log('\nMOVEITEM')
 {
   const l = ['a', 'b', 'c', 'd']

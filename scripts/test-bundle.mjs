@@ -94,7 +94,7 @@ console.log('\nGROUP SELECTION')
   check('no group is drawn twice',
     new Set(displayOrder(def)).size, displayOrder(def).length)
 
-  const narrow = { control: ['517E2'], test: ['517E2+RSL3'], extra: [], excluded: [] }
+  const narrow = { control: ['517E2'], test: ['517E2+RSL3'], extra: [], order: [], excluded: [] }
   const shown = orderSamples(bundle.counts.samples, bundle.samples, narrow)
   check('narrowing drops unselected samples', shown.length, 4)      // 2 groups x 2 reps
   check('samples come back control-first',
