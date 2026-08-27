@@ -13,31 +13,6 @@
 
 import type { CountsMatrix, DEGRow, SampleRow } from '../types'
 
-/**
- * Which test a run performed HERE uses.
- *
- * Both are real differential expression and both are cited as themselves; the
- * difference is what they cost. Measured on 20 000 genes x 16 samples in webR,
- * the same data and the same filter:
- *
- *   limma-voom   1.9 s
- *   DESeq2      18.6 s
- *
- * Which is the whole of why rnaseq-lab "feels fine" and this did not: the lab
- * offers both and defaults to limma-voom, and this offered only DESeq2. A test
- * that takes half a minute is one people stop asking for, and the comparison
- * they then read is whichever pair the pipeline happened to export — which is
- * the constraint this app was built to remove.
- */
-export type Engine = 'limma' | 'deseq2'
-
-export const ENGINES: { id: Engine; label: string; blurb: string; cites: string }[] = [
-  { id: 'limma', label: 'limma-voom', blurb: 'A few seconds. Precision-weighted linear models on log-CPM — the standard fast test, and what RNA-seq Lab runs by default.', cites: 'limma-voom' },
-  { id: 'deseq2', label: 'DESeq2', blurb: 'Half a minute or so. Negative-binomial GLM with shrunken dispersions — what most published bulk analyses report.', cites: 'DESeq2' },
-]
-
-export const engineLabel = (e: Engine) => (e === 'limma' ? 'limma-voom' : 'DESeq2')
-
 const WEBR_URL = 'https://webr.r-wasm.org/v0.6.0/webr.mjs'
 // Our own WASM repo (hosts the locfit stub DESeq2 imports), served with the app.
 // Resolved lazily: this module's pure helpers are unit-tested outside a browser,
@@ -45,6 +20,7 @@ const WEBR_URL = 'https://webr.r-wasm.org/v0.6.0/webr.mjs'
 const locfitRepo = () => new URL('wasm/', document.baseURI).href.replace(/\/$/, '')
 
 let webRPromise: Promise<any> | null = null
+let installed = false
 
 async function getWebR(log: (m: string) => void): Promise<any> {
   if (!webRPromise) {
@@ -61,105 +37,68 @@ async function getWebR(log: (m: string) => void): Promise<any> {
 }
 
 /**
- * Only what the R below actually calls.
+ * DESeq2, and only what the R below actually calls.
  *
- * apeglm was installed on every first run and never used — nothing here calls
- * lfcShrink — so every reader paid a download for a package that was loaded by
- * nothing. limma-voom needs limma and edgeR, which are a fraction of DESeq2's
- * dependency tree, so choosing the fast engine is also the small download.
+ * apeglm went with it on every first run and was loaded by nothing — no
+ * `lfcShrink` anywhere in this file — so every reader paid a download for a
+ * package that never ran.
  */
-const PACKAGES: Record<Engine, string[]> = {
-  limma: ['limma', 'edgeR'],
-  deseq2: ['DESeq2'],
-}
-const installed = new Set<Engine>()
-
-async function ensurePackages(webR: any, engine: Engine, log: (m: string) => void) {
-  if (installed.has(engine)) return
-  log(`Installing ${PACKAGES[engine].join(' + ')}… (first run downloads, then cached)`)
-  await webR.installPackages(PACKAGES[engine], {
+async function ensureDESeq2(webR: any, log: (m: string) => void) {
+  if (installed) return
+  log('Installing DESeq2… (first run downloads ~tens of MB, then cached)')
+  await webR.installPackages(['DESeq2'], {
     repos: [locfitRepo(), 'https://bioc.r-universe.dev', 'https://repo.r-wasm.org'],
   })
-  installed.add(engine)
+  installed = true
 }
 
 /**
- * The gene filter, shared by both engines and taken from rnaseq-lab.
+ * THE FILTER, which is where the time went.
  *
- * `rowSums(counts >= 10) >= max(2, smallest group)` is the standard
- * edgeR/limma rule and is exactly what the lab already applies on its
- * limma path, so the two apps now agree about which genes were tested.
+ * Measured in webR on 20 000 genes x 16 samples — a pooled two-groups-a-side
+ * comparison — the fit is essentially the whole cost and the plumbing is
+ * nothing:
  *
- * This ran on `rowSums(counts) > 0` — drop only the genes that are zero
- * everywhere — which is barely a filter: on a 20 000-gene matrix it removed
- * nothing and DESeq2 fitted a model for every unexpressed gene in the
- * annotation. Filtering first is DESeq2's own documented advice, and measured
- * here it is 20 000 genes down to 14 478 and 26.4 s down to 18.6 s.
+ *   read.csv 0.1 s · building the dds 0.4 s · DESeq() 32.6 s · results() 0.3 s
  *
- * IT MOVES padj, and that is worth saying plainly rather than burying: fewer
- * genes enter the Benjamini-Hochberg correction, so adjusted p-values fall
- * slightly. The genes it removes are ones `results()` would have given padj =
- * NA to anyway under independent filtering — but "would have" is not "did", and
- * the Methods text says the filter was applied.
+ * So the only thing worth changing is how many genes reach `DESeq()`. This
+ * filtered on `rowSums(counts) > 0` — drop the genes that are zero in every
+ * sample — which on a real annotation removes almost nothing and fits a
+ * negative-binomial model for every unexpressed gene in it. The rule here is
+ * the standard edgeR/limma one and is the same rule rnaseq-lab already applies,
+ * so the two apps agree about which genes were tested: 20 000 genes down to
+ * 14 478, and 26.4 s down to 18.6 s.
+ *
+ * IT MOVES padj, which is worth saying plainly rather than burying. Fewer genes
+ * enter the Benjamini-Hochberg correction, so adjusted p-values fall slightly.
+ * The genes it removes are ones `results()` would have given padj = NA anyway
+ * under its own independent filtering — but "would have" is not "did", and the
+ * Methods paragraph states the filter for a run performed here.
+ *
+ * Default parametric dispersion fitting never calls locfit; the rare fallback
+ * path does, and locfit is a stub in this build, so retry with the "mean" fit.
  */
-const FILTER_R = `keep <- rowSums(counts >= 10) >= max(2, min(table(cd$condition)))
-  counts <- counts[keep, , drop = FALSE]`
-
-const READ_R = `counts <- round(as.matrix(read.csv("/work/counts.csv", row.names = 1, check.names = FALSE)))
+const DESEQ_R = `local({
+  suppressMessages(library(DESeq2))
+  REF <- __REF__
+  counts <- round(as.matrix(read.csv("/work/counts.csv", row.names = 1, check.names = FALSE)))
   storage.mode(counts) <- "integer"
   cd <- read.csv("/work/coldata.csv", stringsAsFactors = FALSE, check.names = FALSE)
   rownames(cd) <- cd$sample
   counts <- counts[, cd$sample, drop = FALSE]
-  cd$condition <- factor(cd$condition, levels = c(REF, setdiff(unique(cd$condition), REF)))
-  ${FILTER_R}`
-
-const WRITE_R = `write.csv(out, "/work/deg.csv", row.names = FALSE)
-  sprintf("%d", sum(out$padj < 0.05, na.rm = TRUE))`
-
-// Default parametric dispersion fitting never calls locfit; the rare fallback
-// path does, and locfit is a stub in this build, so retry with the "mean" fit.
-const DESEQ_R = `local({
-  suppressMessages(library(DESeq2))
-  REF <- __REF__
-  ${READ_R}
+  keep <- rowSums(counts >= 10) >= max(2, min(table(cd$condition)))
+  counts <- counts[keep, , drop = FALSE]
+  cd$condition <- relevel(factor(cd$condition), ref = REF)
   dds <- DESeqDataSetFromMatrix(counts, cd, ~condition)
   dds <- tryCatch(DESeq(dds, quiet = TRUE),
                   error = function(e) suppressWarnings(DESeq(dds, fitType = "mean", quiet = TRUE)))
   res <- as.data.frame(results(dds))
-  out <- data.frame(gene_id = rownames(res), gene_name = rownames(res),
+  write.csv(data.frame(gene_id = rownames(res), gene_name = rownames(res),
             baseMean = round(res$baseMean, 3), log2FoldChange = round(res$log2FoldChange, 5),
-            lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj)
-  ${WRITE_R}
+            lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj),
+            "/work/deg.csv", row.names = FALSE)
+  sprintf("%d", sum(res$padj < 0.05, na.rm = TRUE))
 })`
-
-/**
- * limma-voom, written to emit the same seven columns DESeq2 does.
- *
- * `baseMean` is the mean of the normalised counts rather than DESeq2's
- * size-factor-scaled mean, and `lfcSE` is the moderated standard error — both
- * are the same quantity in spirit and neither is the other's number. Every
- * column the bundle contract names is present and real; nothing is faked to
- * fill a slot, which is why AveExpr is not passed off as baseMean.
- */
-const LIMMA_R = `local({
-  suppressMessages({library(limma); library(edgeR)})
-  REF <- __REF__
-  ${READ_R}
-  d <- calcNormFactors(DGEList(counts))
-  design <- model.matrix(~condition, data = cd)
-  v <- voom(d, design)
-  fit <- eBayes(lmFit(v, design))
-  tt <- topTable(fit, coef = 2, number = Inf, sort.by = "none")
-  cpm <- edgeR::cpm(d, normalized.lib.sizes = TRUE)
-  out <- data.frame(gene_id = rownames(tt), gene_name = rownames(tt),
-            baseMean = round(rowMeans(cpm)[rownames(tt)], 3),
-            log2FoldChange = round(tt$logFC, 5),
-            lfcSE = round(sqrt(fit$s2.post[rownames(tt)]) * fit$stdev.unscaled[rownames(tt), 2], 5),
-            pvalue = tt$P.Value, padj = tt$adj.P.Val)
-  ${WRITE_R}
-})`
-
-const R_FOR: Record<Engine, string> = { limma: LIMMA_R, deseq2: DESEQ_R }
 
 export interface DeseqRequest {
   raw: CountsMatrix
@@ -168,8 +107,6 @@ export interface DeseqRequest {
   numerator: string[]
   /** Reference groups. More than one is pooled. */
   denominator: string[]
-  /** Which test to run. Defaults to the fast one — see Engine. */
-  engine?: Engine
   /** Sample names the reader has taken out of the analysis. */
   excluded?: readonly string[]
   /**
@@ -203,7 +140,7 @@ export interface DeseqRequest {
  * does not fit one — the bundle's own exporter does.
  */
 export async function runDESeq2(
-  { raw, samples, numerator, denominator, engine = 'limma', excluded = [], geneNames }: DeseqRequest,
+  { raw, samples, numerator, denominator, excluded = [], geneNames }: DeseqRequest,
   log: (m: string) => void,
 ): Promise<DEGRow[]> {
   const cond: Record<string, string> = {}
@@ -231,7 +168,7 @@ export async function runDESeq2(
     throw new Error(`DESeq2 needs at least 2 replicates per side (${nameNum}: ${nNum}, ${nameDen}: ${nDen}).`)
 
   const webR = await getWebR(log)
-  await ensurePackages(webR, engine, log)
+  await ensureDESeq2(webR, log)
 
   // Raw counts for just these samples, as CSV for R.
   const S = raw.samples.length
@@ -253,8 +190,8 @@ export async function runDESeq2(
   await webR.FS.writeFile('/work/counts.csv', enc.encode(lines.join('\n') + '\n'))
   await webR.FS.writeFile('/work/coldata.csv', enc.encode(coldata))
 
-  log(`Running ${engineLabel(engine)} — ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
-  const nDeg = await webR.evalRString(R_FOR[engine].replace('__REF__', JSON.stringify('CTRL')))
+  log(`Running DESeq2 — ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
+  const nDeg = await webR.evalRString(DESEQ_R.replace('__REF__', JSON.stringify('CTRL')))
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
   log(`Done — ${nDeg} genes at padj < 0.05.`)
   return withSymbols(parseDegCsv(csv), geneNames ?? namesOf(raw))
@@ -313,23 +250,17 @@ function parseDegCsv(text: string): DEGRow[] {
 /**
  * The id a run performed here is filed under.
  *
- * `~run:`, not `~deseq2:`. It was the latter while DESeq2 was the only thing
- * this app could run, and became a lie the moment limma-voom was added — the id
- * is not private, it names the CSV the DEG table downloads, so a limma result
- * left here as `deg_~deseq2:KO_vs_WT.csv` on somebody's disk. The engine is
- * appended by the caller, so the filename says which test produced it.
- *
  * `.join` directly, never `[...xs].join`. Spreading accepts a bare string and
  * turns it into its characters, so a caller that had not been updated from the
- * old single-group signature produced `~run:5+1+7+E+2_vs_...` — a valid
+ * old single-group signature produced `~deseq2:5+1+7+E+2_vs_...` — a valid
  * string, a plausible-looking id, and a key nothing else would ever match.
  * `.join` on a string throws, which is what a caller passing the wrong type
  * deserves.
  */
 export const computedContrastId = (numerator: readonly string[], denominator: readonly string[]) =>
-  `~run:${numerator.join('+')}_vs_${denominator.join('+')}`
+  `~deseq2:${numerator.join('+')}_vs_${denominator.join('+')}`
 
-export const isComputedContrast = (id: string) => id.startsWith('~run:')
+export const isComputedContrast = (id: string) => id.startsWith('~deseq2:')
 
 export const countSignificant = (rows: DEGRow[], padjMax = 0.05, lfcMin = 1) =>
   rows.reduce((a, r) =>

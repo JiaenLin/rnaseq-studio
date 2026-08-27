@@ -1,8 +1,6 @@
 import type { Bundle } from '../types'
 import type { ComparisonState } from '../lib/contrast'
 import type { GroupSel } from '../lib/design'
-import type { Engine } from '../lib/deseq'
-import { ENGINES, engineLabel } from '../lib/deseq'
 import { conditionSizes } from '../lib/contrast'
 import { displayOrder, sideLabel } from '../lib/design'
 import { moveItem } from '../lib/order'
@@ -23,13 +21,11 @@ import { moveItem } from '../lib/order'
  * Both are DESeq2; neither is a lesser answer.
  */
 export default function ComparisonBar({
-  bundle, sel, state, engine, onEngine, running, runLog, onSel, onRun,
+  bundle, sel, state, running, runLog, onSel, onRun,
 }: {
   bundle: Bundle
   sel: GroupSel
   state: ComparisonState
-  engine: Engine
-  onEngine: (e: Engine) => void
   running: boolean
   /** Progress or failure for THIS pair only — see App's run state. */
   runLog: string
@@ -80,31 +76,14 @@ export default function ComparisonBar({
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <Provenance state={state} engine={engine} />
-          {/* Shown while a run is POSSIBLE and also once one has happened.
-              Gated on 'computable' alone it disappeared the moment a result
-              landed — and since the engine is part of the cache key, the pair
-              was then computed for this engine and computable for the other
-              with no way on screen to reach it. A dead end you could only leave
-              by changing the comparison. */}
-          {(state.source === 'computable' || state.source === 'computed') && (
-            <span className="flex items-center gap-1.5">
-              {/* The engine sits ON the run button, because it is a property of
-                  the run and its whole point is how long that run takes. */}
-              <select className="input py-1 text-xs" value={engine} aria-label="Test to run"
-                disabled={running} onChange={e => onEngine(e.target.value as Engine)}
-                title={ENGINES.find(x => x.id === engine)?.blurb}>
-                {ENGINES.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
-              </select>
-              {state.source === 'computable' && (
-                <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
-                  {running ? `Running ${engineLabel(engine)}…`
-                    : state.hiddenPrecomputed
-                      ? 'Re-run without the excluded samples'
-                      : 'Run for this pair'}
-                </button>
-              )}
-            </span>
+          <Provenance state={state} />
+          {state.source === 'computable' && (
+            <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
+              {running ? 'Running DESeq2…'
+                : state.hiddenPrecomputed
+                  ? 'Re-run without the excluded samples'
+                  : 'Run DESeq2 for this pair'}
+            </button>
           )}
           {running && <span className="text-xs text-slate-400">{runLog}</span>}
         </div>
@@ -253,7 +232,7 @@ function GroupRow({ all, sizes, sideOf, want, onPut }: {
   )
 }
 
-function Provenance({ state, engine }: { state: ComparisonState; engine: Engine }) {
+function Provenance({ state }: { state: ComparisonState }) {
   const n = state.contrast?.n_deg
   if (state.source === 'unavailable') {
     return <span className="pill bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
@@ -268,7 +247,7 @@ function Provenance({ state, engine }: { state: ComparisonState; engine: Engine 
           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200'
           : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
         {state.source === 'bundle' ? 'DESeq2 · from your pipeline'
-          : state.source === 'computed' ? `${engineLabel(engine)} · run here`
+          : state.source === 'computed' ? 'DESeq2 · run here'
             : 'not computed yet'}
       </span>
       {state.source === 'bundle' && typeof n === 'number' && (

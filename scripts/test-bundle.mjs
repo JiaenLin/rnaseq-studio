@@ -8,7 +8,6 @@
 import { assemble } from '../src/lib/bundle.ts'
 import { defaultSelection, displayOrder, openingContrast, orderSamples, samplesInGroups } from '../src/lib/design.ts'
 import { computedContrastId, countSignificant, isComputedContrast, namesOf, withSymbols } from '../src/lib/deseq.ts'
-import { comparisonKey } from '../src/lib/contrast.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -157,7 +156,7 @@ console.log('\nDESeq2 CONTRAST HELPERS')
     isComputedContrast(computedContrastId(['a'], ['b'])), true)
   check('pipeline contrast ids are not', isComputedContrast('a_vs_b'), false)
   check('the id carries both group names',
-    computedContrastId(['517E2+RSL3'], ['517E2']), '~run:517E2+RSL3_vs_517E2')
+    computedContrastId(['517E2+RSL3'], ['517E2']), '~deseq2:517E2+RSL3_vs_517E2')
 
   const rows = [
     { gene_id: 'A', gene_name: 'A', baseMean: 10, log2FoldChange: 2.5, lfcSE: null, pvalue: 1e-6, padj: 1e-4 },
@@ -203,27 +202,6 @@ console.log('\nTHE PAIR A BUNDLE OPENS ON')
     openingContrast({ ...meta, control: 'Nobody' }).id, 'a')
   check('and no pairwise contrast at all is undefined, not a crash',
     openingContrast({ ...meta, contrasts: [meta.contrasts[3]] }), undefined)
-}
-
-console.log('\nTWO ENGINES ARE TWO RESULTS')
-{
-  // Running limma-voom and then DESeq2 on the same pair must not hit one cache
-  // entry. It is the same defect the exclusions were added to this key to
-  // prevent — the second run's badge over the first run's numbers — one field
-  // along, and it would be invisible on screen.
-  const b = {
-    samples: [{ sample: 'a', condition: 'WT' }, { sample: 'b', condition: 'KO' }],
-    counts: { samples: ['a', 'b'] },
-  }
-  const limma = comparisonKey(b, ['WT'], ['KO'], [], 'limma')
-  const deseq = comparisonKey(b, ['WT'], ['KO'], [], 'deseq2')
-  check('the engine is part of the key', limma === deseq, false)
-  check('and the same engine still agrees with itself',
-    comparisonKey(b, ['WT'], ['KO'], [], 'limma'), limma)
-  check('the default is the fast one', comparisonKey(b, ['WT'], ['KO'], []), limma)
-  // Exclusions and engine both, in one key, without either eating the other.
-  check('exclusions still key too',
-    comparisonKey(b, ['WT'], ['KO'], ['a'], 'limma') === limma, false)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll bundle tests passed\n')

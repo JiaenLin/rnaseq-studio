@@ -46,10 +46,8 @@ sets. Everything runs client-side — **your data never leaves your device** (no
   which genes your data does not carry *before* anything is added, and your sets are then tested
   and corrected exactly as MSigDB's are.
 - **Any comparison** — pick the control and the arms to compare. If your bundle did not export
-  that pair, Studio tests it here, with R compiled to WebAssembly: **limma-voom** by default
-  (a few seconds) or **DESeq2** (slower, and what most published bulk analyses report). Both
-  are real differential expression, every result says which one produced it, and the Methods
-  paragraph names it. Needs `raw_counts.csv`.
+  that pair, Studio runs **DESeq2 itself** (R compiled to WebAssembly), so every number in the
+  app comes from DESeq2 — never a lighter substitute. Needs `raw_counts.csv`.
 - **Methods** — a draft Methods paragraph for your manuscript, written from the cutoffs you
   actually set on the other tabs. Change a threshold and the text follows; copy or download it.
 - Every chart exports to **PNG**.

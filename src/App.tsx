@@ -2,8 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, openingContrast, sideLabel } from './lib/design'
-import type { Engine } from './lib/deseq'
-import { computedContrastId, countSignificant, engineLabel, runDESeq2 } from './lib/deseq'
+import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
 import { auditBundle, comparisonKey, comparisonState, relevantExclusions } from './lib/contrast'
 import type { ComputedRun, OverlapQuery } from './lib/venn'
 import { overlapSources } from './lib/venn'
@@ -75,14 +74,6 @@ export default function App() {
    * the run describes itself here instead.
    */
   const [computedRuns, setComputedRuns] = useState<Record<string, ComputedRun>>({})
-  /**
-   * Which test a run performed here uses.
-   *
-   * Held across bundles on purpose — it is a preference about how long you are
-   * willing to wait, not a fact about the data — while everything keyed on it
-   * resets with the bundle like the rest.
-   */
-  const [engine, setEngine] = useState<Engine>('limma')
   /**
    * A gene list the Enrichment tab is testing instead of this contrast's DEGs.
    *
@@ -185,8 +176,8 @@ export default function App() {
   /* What can be said about the pair on screen — precomputed, computed here,
    * runnable, or not. One object, asked fresh whenever either side moves. */
   const state = useMemo(
-    () => (bundle ? comparisonState(bundle, sel.control, sel.test, sel.excluded, computed, engine) : null),
-    [bundle, sel.control, sel.test, sel.excluded, computed, engine])
+    () => (bundle ? comparisonState(bundle, sel.control, sel.test, sel.excluded, computed) : null),
+    [bundle, sel.control, sel.test, sel.excluded, computed])
 
   /* What the bundle got wrong, said once at the top rather than discovered as
    * an empty plot four tabs away. */
@@ -220,10 +211,8 @@ export default function App() {
     }
     // Both carry the exclusions, so a re-run with a different set of samples
     // is a different result rather than a cache hit on the previous one.
-    const key = comparisonKey(bundle, sel.control, sel.test, sel.excluded, engine)
-    // The engine is in the id as well as the key: two engines on one pair are
-    // two contrasts, and `degByContrast` is keyed by id.
-    const id = `${computedContrastId(sel.test, sel.control)}${key.includes('|-') ? key.slice(key.indexOf('|-'), key.lastIndexOf('|')) : ''}|${engine}`
+    const key = comparisonKey(bundle, sel.control, sel.test, sel.excluded)
+    const id = `${computedContrastId(sel.test, sel.control)}${key.includes('|-') ? key.slice(key.indexOf('|-')) : ''}`
     const rows = computed[key]
     const contrast: Contrast = {
       id, numerator: sideLabel(sel.test), denominator: sideLabel(sel.control),
@@ -240,7 +229,7 @@ export default function App() {
     // paint a different comparison's volcano and DEG table under this pair's
     // label — plausible numbers belonging to another question.
     return { bundle, contrast, pending: true }
-  }, [bundle, state, sel.control, sel.test, computed, engine])
+  }, [bundle, state, sel.control, sel.test, computed])
 
   /* The gene-set library, owned here rather than by a tab.
    *
@@ -305,13 +294,13 @@ export default function App() {
     const may = state?.source === 'computable'
       || (state?.source === 'bundle' && state.canRun && (state.staleExclusions?.length ?? 0) > 0)
     if (!bundle?.rawCounts || !may) return
-    const pair = comparisonKey(bundle, sel.control, sel.test, sel.excluded, engine)
+    const pair = comparisonKey(bundle, sel.control, sel.test, sel.excluded)
     setRun({ pair, running: true, log: '' })
     const log = (m: string) => setRun(r => (r.pair === pair ? { ...r, log: m } : r))
     try {
       const rows = await runDESeq2(
         { raw: bundle.rawCounts, samples: bundle.samples,
-          numerator: sel.test, denominator: sel.control, engine, excluded: sel.excluded,
+          numerator: sel.test, denominator: sel.control, excluded: sel.excluded,
           // From the NORMALIZED matrix: raw_counts.csv is often accession-only
           // while normalized_counts.csv carries the symbol column.
           geneNames: symbolOf }, log)
@@ -331,7 +320,7 @@ export default function App() {
   // True when the selected pair has no DESeq2 result yet.
   const pending = !!active?.pending
   /** The run's own pair, so one pair's failure never renders under another. */
-  const myRun = bundle && run.pair === comparisonKey(bundle, sel.control, sel.test, sel.excluded, engine)
+  const myRun = bundle && run.pair === comparisonKey(bundle, sel.control, sel.test, sel.excluded)
     ? run : { running: false, log: '' }
 
   return (
@@ -396,7 +385,7 @@ export default function App() {
           and saying which one it is is not clutter. */}
       {bundle && state && (
         <ComparisonBar
-          bundle={bundle} sel={sel} state={state} engine={engine} onEngine={setEngine}
+          bundle={bundle} sel={sel} state={state}
           running={myRun.running} runLog={myRun.log}
           onSel={pickSel} onRun={runPair} />
       )}
@@ -474,9 +463,8 @@ export default function App() {
             {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap'
               && !(tab === 'enrichment' && geneQuery) && pending && (
               <NeedsStats
-                contrast={contrast} canCompute={!!bundle.rawCounts} engine={engine}
-                running={myRun.running} runLog={myRun.log}
-                withheld={state?.staleExclusions ?? []} onRun={runPair} />
+                contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}
+                runLog={myRun.log} withheld={state?.staleExclusions ?? []} onRun={runPair} />
             )}
             {!pending && (
               <>
@@ -519,8 +507,8 @@ export default function App() {
  * Deliberately blank of numbers: the alternative is displaying a different
  * comparison's volcano under this pair's name.
  */
-function NeedsStats({ contrast, canCompute, engine, running, runLog, withheld, onRun }: {
-  contrast: Contrast; canCompute: boolean; engine: Engine; running: boolean; runLog: string
+function NeedsStats({ contrast, canCompute, running, runLog, withheld, onRun }: {
+  contrast: Contrast; canCompute: boolean; running: boolean; runLog: string
   /** Samples an existing pipeline table contains that the reader excluded. */
   withheld: string[]
   onRun: () => void
@@ -528,7 +516,7 @@ function NeedsStats({ contrast, canCompute, engine, running, runLog, withheld, o
   return (
     <div className="card mx-auto mt-6 max-w-xl p-8 text-center">
       <h3 className="text-base font-semibold">
-        {withheld.length ? 'These statistics do not describe your selection' : 'No result for this comparison yet'}
+        {withheld.length ? 'These statistics do not describe your selection' : 'No DESeq2 result for this comparison yet'}
       </h3>
       <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
         {withheld.length ? (
@@ -542,14 +530,14 @@ function NeedsStats({ contrast, canCompute, engine, running, runLog, withheld, o
         ) : (
           <><b>{contrast.label}</b> was not exported by your pipeline
             {canCompute
-              ? ', so nothing is shown here until it has been tested. limma-voom takes a few seconds after R loads; DESeq2 takes longer.'
+              ? ', so nothing is shown here until it has been tested. Running it takes a few seconds after R loads.'
               : ', and this bundle has no raw counts to test it with.'}</>
         )}
       </p>
       {canCompute ? (
         <>
           <button className="btn btn-primary mt-4" disabled={running} onClick={onRun}>
-            {running ? `Running ${engineLabel(engine)}…` : `Run ${engineLabel(engine)} for this pair`}
+            {running ? 'Running DESeq2…' : 'Run DESeq2 for this pair'}
           </button>
           {running && <p className="mt-2 text-xs text-slate-400">{runLog}</p>}
           {!running && runLog.startsWith('Failed') && (
@@ -558,7 +546,7 @@ function NeedsStats({ contrast, canCompute, engine, running, runLog, withheld, o
         </>
       ) : (
         <p className="mt-3 text-xs text-slate-400">
-          Re-export the bundle with <code className="font-mono">raw_counts.csv</code> — both tests model
+          Re-export the bundle with <code className="font-mono">raw_counts.csv</code> — DESeq2 models
           raw counts, so a normalized matrix cannot stand in. Or pick a pair your pipeline exported.
         </p>
       )}

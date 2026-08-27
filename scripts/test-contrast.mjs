@@ -100,14 +100,8 @@ console.log('\nPRECOMPUTED IS A PROPERTY OF THE ANSWER, NOT A MENU')
   check('a pooled side is never a bundle table',
     comparisonState(b, ['WT'], ['KO', 'Rescue'], [], {}).source, 'computable')
   check('and pools the replicate count', comparisonState(b, ['WT'], ['KO', 'Rescue'], [], {}).nTest, 12)
-  // Built rather than spelled: the key gained the engine, and a test that
-  // hard-codes its format tests the format instead of the behaviour.
   check('a session run is reported as run here',
-    comparisonState(b, ['WT'], ['Rescue'], [],
-      { [comparisonKey(b, ['WT'], ['Rescue'], [])]: [] }).source, 'computed')
-  check('and a run with the OTHER engine is not that run',
-    comparisonState(b, ['WT'], ['Rescue'], [],
-      { [comparisonKey(b, ['WT'], ['Rescue'], [], 'deseq2')]: [] }, 'limma').source, 'computable')
+    comparisonState(b, ['WT'], ['Rescue'], [], { 'Rescue|WT': [] }).source, 'computed')
 }
 
 console.log('\nWHAT CANNOT BE ASKED, AND WHY')
