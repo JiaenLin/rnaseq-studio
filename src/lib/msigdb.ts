@@ -50,6 +50,18 @@ export interface ManifestSource {
    */
   projected?: boolean
   /**
+   * What this collection is, when its name does not settle it.
+   *
+   * Exists for one collection and would have prevented a real
+   * misunderstanding. MSigDB's mouse M5:MPT is the TUMOUR Phenotype Ontology —
+   * 92 neoplasia terms mined out of the Mammalian Phenotype Ontology — and it
+   * was offered here as "Mouse phenotype", directly under human's "Human
+   * phenotype" (HPO, 5 793 sets, every phenotype there is). Anyone reading the
+   * two as a species pair was wrong, and the only evidence on screen was that
+   * one of them was suspiciously small.
+   */
+  note?: string
+  /**
    * The collections this one was assembled from, when it is not a database of
    * its own — Metabolic, which scripts/derive-metabolic.mjs selects out of the
    * pathway collections and GO by name.

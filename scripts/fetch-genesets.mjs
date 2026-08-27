@@ -55,7 +55,7 @@ const ORDER = [
   'Hallmark', 'KEGG', 'KEGG (orthologs)', 'Reactome', 'WikiPathways', 'PID',
   'BioCarta', 'Canonical (other)',
   // Ontologies.
-  'GO:BP', 'GO:MF', 'GO:CC', 'Human phenotype', 'Mouse phenotype',
+  'GO:BP', 'GO:MF', 'GO:CC', 'Human phenotype', 'Tumour phenotype',
   // Signatures from experiments.
   'Cell type', 'Perturbations', 'Immunologic', 'Vaccine response', 'Oncogenic',
   // Regulatory targets.
@@ -74,6 +74,20 @@ const ORDER = [
  * of native collections looking like one of them.
  */
 const PROJECTED = new Set(['KEGG (orthologs)'])
+
+/**
+ * What a collection is, where its name does not settle it.
+ *
+ * "Mouse phenotype" was the wrong name for MSigDB's M5:MPT and sat directly
+ * under human's "Human phenotype" in this very list, which made it read as the
+ * mouse counterpart of the Human Phenotype Ontology. It is not: HPO is 5 793
+ * sets covering every human phenotype, MPT is 92 sets and every one of them is
+ * a tumour. The name says so now, and this says the rest.
+ */
+const NOTES = {
+  'Tumour phenotype': 'MSigDB M5:MPT — tumour phenotype terms mined out of the '
+    + 'Mammalian Phenotype Ontology. Neoplasia only, not the whole MP ontology.',
+}
 
 const LABEL = {
   human: { label: 'Human', taxon: 'Homo sapiens' },
@@ -204,7 +218,8 @@ for (const species of ['human', 'mouse']) {
     rawTotal += gmt.length
     gzTotal += gz.length
     sources.push({ source, file: name, nSets, nGenes, bytes: gz.length,
-      on: ON.has(source), projected: PROJECTED.has(source) })
+      on: ON.has(source), projected: PROJECTED.has(source),
+      ...(NOTES[source] ? { note: NOTES[source] } : {}) })
     console.log(`  ${source.padEnd(14)} ${String(nSets).padStart(5)} sets  `
       + `${String(nGenes).padStart(6)} genes  `
       + `gmt ${(gmt.length / 1e6).toFixed(2)} MB -> gz ${(gz.length / 1e6).toFixed(2)} MB`

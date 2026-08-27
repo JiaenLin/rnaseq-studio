@@ -9,8 +9,8 @@
 # user cache and follows the database forward.
 #
 # NATIVE per species, via db_species. MSigDB publishes real mouse collections —
-# MH, M2, M5, M8 — annotated against mouse genes, and msigdbr will also project
-# the human ones through orthologs if asked. Those are not the same data: over
+# MH, M1, M2, M3, M5, M7 and M8, 17 068 sets in all — annotated against mouse
+# genes, and msigdbr will also project the human ones through orthologs if asked. Those are not the same data: over
 # the 50 hallmark sets the two share a mean Jaccard of 0.569 and NOT ONE set has
 # identical membership. This exports the native collections only, so a mouse
 # result is a claim about a mouse annotation.
@@ -108,7 +108,11 @@ GROUPS <- list(
   list("Perturbations", "MM", "Mus musculus", "M2", "CGP"),
   list("TF targets",   "MM", "Mus musculus", "M3", "GTRD"),
   list("miRNA targets", "MM", "Mus musculus", "M3", "MIRDB"),
-  list("Mouse phenotype", "MM", "Mus musculus", "M5", "MPT"),
+  # M5:MPT is the TUMOUR Phenotype Ontology, not the Mammalian one. 92 sets,
+  # every one a neoplasia term. Exported as "Tumour phenotype" because "Mouse
+  # phenotype" put it under human's "Human phenotype" in the interface and made
+  # it read as that collection's mouse counterpart, which it is not.
+  list("Tumour phenotype", "MM", "Mus musculus", "M5", "MPT"),
   list("Positional",   "MM", "Mus musculus", "M1", NA)
 )
 

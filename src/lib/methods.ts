@@ -71,6 +71,17 @@ export interface OverlapParams {
   union: number
 }
 
+export interface GseaParams {
+  metric: 'stat' | 'combined' | 'log2FC' | 'signedP'
+  nperm: number
+  minSize: number
+  maxSize: number
+  nSets: number
+  nRanked: number
+  nSig: number
+  sources: string[]
+}
+
 export interface PcaParams {
   /** Genes entering the decomposition — DESeq2's ntop. */
   ntop: number
@@ -89,8 +100,9 @@ export interface MethodsState {
   sets: SetParams | null
   pca: PcaParams | null
   overlap: OverlapParams | null
+  gsea: GseaParams | null
   /** Which tabs have actually been opened — an unopened tab is still at defaults. */
-  seen: Record<'de' | 'ora' | 'sets' | 'pca' | 'overlap', boolean>
+  seen: Record<'de' | 'ora' | 'sets' | 'pca' | 'overlap' | 'gsea', boolean>
 }
 
 // Defaults mirror each component's initial state, so the text is complete even
@@ -101,7 +113,8 @@ let state: MethodsState = {
   sets: null,
   pca: null,
   overlap: null,
-  seen: { de: false, ora: false, sets: false, pca: false, overlap: false },
+  gsea: null,
+  seen: { de: false, ora: false, sets: false, pca: false, overlap: false, gsea: false },
 }
 
 const listeners = new Set<() => void>()
@@ -131,6 +144,12 @@ export function reportSets(p: SetParams) {
 export function reportOverlap(p: OverlapParams) {
   if (state.overlap && shallowEq(state.overlap, p)) return
   state = { ...state, overlap: p, seen: { ...state.seen, overlap: true } }
+  emit()
+}
+
+export function reportGsea(p: GseaParams) {
+  if (state.gsea && shallowEq(state.gsea, p)) return
+  state = { ...state, gsea: p, seen: { ...state.seen, gsea: true } }
   emit()
 }
 
@@ -198,6 +217,14 @@ const REFS: Record<string, RefEntry> = {
     short: 'Ashburner et al., 2000',
     full: 'Ashburner M, Ball CA, Blake JA, et al. Gene Ontology: tool for the unification of biology. Nat Genet. 2000;25:25–29.',
   },
+  gsea: {
+    short: 'Subramanian et al., 2005',
+    full: 'Subramanian A, Tamayo P, Mootha VK, et al. Gene set enrichment analysis: a knowledge-based approach for interpreting genome-wide expression profiles. Proc Natl Acad Sci USA. 2005;102:15545–15550.',
+  },
+  mootha: {
+    short: 'Mootha et al., 2003',
+    full: 'Mootha VK, Lindgren CM, Eriksson KF, et al. PGC-1α-responsive genes involved in oxidative phosphorylation are coordinately downregulated in human diabetes. Nat Genet. 2003;34:267–273.',
+  },
   ssgsea: {
     short: 'Barbie et al., 2009',
     full: 'Barbie DA, Tamayo P, Boehm JS, et al. Systematic RNA interference reveals that oncogenic KRAS-driven cancers require TBK1. Nature. 2009;462:108–112.',
@@ -224,7 +251,7 @@ const REFS: Record<string, RefEntry> = {
 export const MSIGDB_COLLECTIONS = new Set([
   'Hallmark', 'KEGG', 'KEGG (orthologs)', 'Reactome', 'WikiPathways', 'PID',
   'BioCarta', 'Canonical (other)', 'Metabolic',
-  'GO:BP', 'GO:MF', 'GO:CC', 'Human phenotype', 'Mouse phenotype',
+  'GO:BP', 'GO:MF', 'GO:CC', 'Human phenotype', 'Tumour phenotype',
   'Cell type', 'Perturbations', 'Immunologic', 'Vaccine response', 'Oncogenic',
   'TF targets', 'miRNA targets',
   'Cancer atlas (3CA)', 'Cancer modules', 'Cancer neighbourhoods',
@@ -279,13 +306,20 @@ const list = (xs: string[]) =>
 const directionText = (d: 'both' | 'up' | 'down', numerator: string) =>
   d === 'both' ? 'in either direction' : `${d === 'up' ? 'up' : 'down'}-regulated in ${numerator}`
 
+const METRIC_TEXT: Record<GseaParams['metric'], string> = {
+  stat: 'the Wald statistic (log2 fold-change divided by its standard error)',
+  combined: 'a combined score of −log10(p) × log2 fold-change',
+  signedP: '−log10(p) signed by the direction of the fold change',
+  log2FC: 'log2 fold-change',
+}
+
 const SCORE_TEXT: Record<SetParams['scoreMethod'], string> = {
   runningsum: 'a weighted rank running-sum statistic (ssGSEA-style{{ssgsea}}, α = 0.25) over within-sample gene ranks',
   meanrank: 'the mean within-sample rank of set members, scaled to 0–1',
   meanz: 'the mean z-score of set members across samples',
 }
 
-export type AnalysisId = 'de' | 'pca' | 'ora' | 'sets' | 'overlap' | 'ranking'
+export type AnalysisId = 'de' | 'pca' | 'ora' | 'gsea' | 'sets' | 'overlap' | 'ranking'
 export type CiteStyle = 'numbered' | 'authoryear'
 
 export interface MethodsDoc {
@@ -384,6 +418,26 @@ export function buildDoc(
       `with Benjamini–Hochberg correction and the ${fmtN(o.nBackground)} annotated genes detected in this ` +
       `dataset as background (${fmtN(o.nSig)} sets at adjusted p < 0.05).`)
     if (!s.seen.ora) unseen.push('enrichment')
+  }
+
+  /* Pre-ranked GSEA.
+     Its own sentence, and it must not reuse the ORA one's cutoffs: GSEA applies
+     none. Saying "differentially expressed genes were tested" of a method that
+     ranks every gene and thresholds nothing would misdescribe the analysis. */
+  if (include.has('gsea') && s.gsea) {
+    const g = s.gsea
+    const named = g.sources.map(src => {
+      const key = sourceRef(src)
+      return key ? `${src}{{${key}}}` : src
+    })
+    sentences.push(
+      `All ${fmtN(g.nRanked)} tested genes were ranked by ${METRIC_TEXT[g.metric]} and analysed by `
+      + `pre-ranked gene set enrichment analysis{{gsea,mootha}} against ${fmtN(g.nSets)} gene sets from `
+      + `${named.length ? list(named) : 'all enabled collections'} of ${g.minSize}–${g.maxSize} genes, `
+      + `using the weighted (p = 1) Kolmogorov–Smirnov running-sum statistic with `
+      + `${fmtN(g.nperm)} gene-set permutations per set size and Benjamini–Hochberg{{bh}} correction `
+      + `(${fmtN(g.nSig)} sets at adjusted p < 0.05).`)
+    if (!s.seen.gsea) unseen.push('GSEA')
   }
 
   /* Where several comparisons agree.

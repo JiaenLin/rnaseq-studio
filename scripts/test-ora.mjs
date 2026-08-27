@@ -100,5 +100,33 @@ console.log('\nTHE SPECIES A BUNDLE RECORDS')
   check('nor is something unmappable', speciesOfMeta('Danio rerio'), null)
 }
 
+console.log('\nTHE OVERLAP COLUMN IS SPELLED THE LIBRARY\u2019S WAY')
+{
+  // The whole reason this needs pinning: MSigDB spells one gene two ways, GFAP
+  // for human and Gfap for mouse, and the index keeps the LIBRARY's spelling so
+  // a mouse result reads as mouse. Every consumer therefore has to match case-
+  // insensitively — and the enrichment drill-down did not, so on any mouse
+  // bundle it looked up "Cyld" in a map keyed "CYLD", missed every gene, and
+  // rendered a table in which every log2FC was a dash and every gene "n.s.".
+  // Human hid it completely: there the two spellings are the same string.
+  const gmt = 'MOUSE_SET\tM\tCyld\tIl10\tIl2\tStat5a\nOTHER\tM\tCyld\tPnp\n'
+  // A bundle whose exporter upper-cased its symbols, which is common and legal.
+  const bg = ['CYLD', 'IL10', 'IL2', 'STAT5A', 'PNP', 'ACTB', 'GAPDH']
+  const index = indexFor([parseSets(gmt, 'Mouse sets')], bg)
+  const res = oraIndexed(['CYLD', 'IL10', 'IL2'], index, { minSize: 1, maxSize: 100 })
+
+  check('the gene matched despite the casing', res.length > 0, true)
+  const set = res.find(r => r.id === 'MOUSE_SET')
+  check('and the set counts all three', set.count, 3)
+  // The point of the test: what comes OUT is the library's spelling, not the
+  // query's. A consumer that assumes otherwise is broken for mouse only.
+  check('the overlap carries the library spelling', set.overlap, ['Cyld', 'Il10', 'Il2'])
+  check('which is not what the query said',
+    set.overlap.some(g => g === g.toUpperCase()), false)
+  // The contract the components must honour.
+  check('upper-casing it recovers the bundle\u2019s key',
+    set.overlap.map(g => g.toUpperCase()), ['CYLD', 'IL10', 'IL2'])
+}
+
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll ORA tests passed\n')
 process.exit(failed ? 1 : 0)

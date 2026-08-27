@@ -5,6 +5,7 @@ import { oraColorDomain, oraIndexed, type ORAResult } from '../lib/ora'
 import { useSetIndex, type LibraryControl } from '../lib/genesets.ts'
 import type { OverlapQuery, QueryRow } from '../lib/venn'
 import { LibraryPicker } from './GeneSetSources.tsx'
+import Gsea from './Gsea.tsx'
 import { contrastTitle } from '../lib/palette'
 import { reportOra, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
@@ -99,6 +100,17 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
    * So the floor is derived from the library until the reader touches the
    * field, after which it is theirs and nothing moves it.
    */
+  /**
+   * Which test. ORA and GSEA ask different questions of the same library.
+   *
+   * A WEDGE forces ORA, and that is not a limitation to work around: a wedge of
+   * the Overlap Venn is a gene LIST, assembled from several comparisons, and it
+   * has no single ranking to walk. Offering GSEA on it would mean silently
+   * ranking it by one of those comparisons and calling the result the wedge's.
+   */
+  const [method, setMethod] = useState<'ora' | 'gsea'>('ora')
+  const test = query ? 'ora' : method
+
   const [size, setSize] = useState<{ min: number; max: number } | null>(null)
   const smallLibrary = lib.collections.length > 0
     && lib.collections.every(c => c.sets.length < SMALL_LIBRARY)
@@ -237,9 +249,34 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
   const bars = [...top].reverse()
   const selected = orderedResults.find(r => r.id === termId) || top[0]
 
+  /**
+   * The overlapping genes, with this contrast's numbers beside them.
+   *
+   * UPPER-CASED before the lookup, and the bundle's own spelling shown.
+   *
+   * MSigDB spells one gene two ways — GFAP for human, Gfap for mouse — and the
+   * index deliberately keeps the LIBRARY's spelling so a mouse result reads as
+   * mouse. Both maps here are keyed upper-case, as everything in this app that
+   * matches genes across two sources is. This lookup was not: it asked for
+   * "Cyld" in a map holding "CYLD", missed every gene of every mouse dataset,
+   * and drew a table in which every log2FC was a dash and every gene "n.s.".
+   * Human hid it entirely, because there the two spellings are one string.
+   *
+   * The label is the bundle's `gene_name` when the gene is in it, so a gene
+   * reads the same here as on the DEG table and the volcano, and so the click
+   * below hands the expression tab a name it will recognise. The library's
+   * spelling stands in only for a gene the bundle does not carry — which
+   * cannot happen, since the background is the bundle, but a fallback that
+   * shows something beats one that shows undefined.
+   */
   const memberRows = (selected?.overlap || []).map(g => {
-    const d = degMap.get(g)
-    return { g, d, comb: d ? combinedScore(d.log2FoldChange, d.pvalue) : null, rank: rankMap.get(g) }
+    const key = g.toUpperCase()
+    const d = degMap.get(key)
+    return {
+      g: d ? (d.gene_name || d.gene_id) : g,
+      d, comb: d ? combinedScore(d.log2FoldChange, d.pvalue) : null,
+      rank: rankMap.get(key),
+    }
   }).sort((a, b) => (b.comb ?? -Infinity) - (a.comb ?? -Infinity))
 
   // Every set, every column, every overlapping gene — the figure shows fifteen.
@@ -298,14 +335,40 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
           </div>
         )}
 
+        {/* Above the collections, because it decides what the collections are
+            FOR. Both tests read the same library and the same size window; they
+            differ in what they do with the gene list. */}
+        {!query && (
+          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Test</span>
+            <div className="flex gap-1 rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+              {(['ora', 'gsea'] as const).map(m => (
+                <button key={m} aria-pressed={test === m}
+                  className={`pressable rounded-md px-2.5 py-1 text-xs font-medium transition ${test === m
+                    ? 'bg-indigo-500 text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-100'}`}
+                  onClick={() => setMethod(m)}>
+                  {m === 'ora' ? 'Over-representation' : 'GSEA'}
+                </button>
+              ))}
+            </div>
+            <span className="min-w-0 flex-1 text-xs text-slate-400">
+              {test === 'ora'
+                ? 'Tests the genes that clear your cutoffs against each set. The answer moves with the cutoffs, and a coordinated shift too small to clear them is invisible.'
+                : 'Ranks every tested gene and asks where each set sits in that ranking. No cutoff, nothing discarded, and the answer is signed.'}
+            </span>
+          </div>
+        )}
+
         <LibraryPicker library={library} index={index} background={background}
           recorded={bundle.meta.species} />
 
-        <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${query ? 'xl:grid-cols-3' : 'xl:grid-cols-6'}`}>
-          {/* The cutoffs are hidden, not disabled, when a wedge is being tested:
-              a greyed-out "padj ≤ 0.05" beside a list that was not selected by
-              it still reads as a description of that list. */}
-          {!query && <>
+        <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${query || test === 'gsea' ? 'xl:grid-cols-3' : 'xl:grid-cols-6'}`}>
+          {/* The cutoffs are hidden, not disabled, when they did not select the
+              list being tested — a wedge, which was selected elsewhere, or GSEA,
+              which applies no cutoff at all. A greyed-out "padj ≤ 0.05" beside
+              either still reads as a description of what is on screen. */}
+          {!query && test === 'ora' && <>
           <Ctl label="padj ≤">
             <div className="flex items-center gap-2">
               <input type="range" min={0} max={0.25} step={0.005} value={Math.min(padjMax, 0.25)} onChange={e => setPadjMax(+e.target.value)} className="w-full" />
@@ -339,15 +402,15 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
                 onChange={e => setMaxSize(Math.max(1, +e.target.value || 1))} />
             </div>
           </Ctl>
-          <Ctl label="bar shows">
+          {test === 'ora' && <Ctl label="bar shows">
             <select className="input w-full py-1" value={metric} aria-label="What the bar length shows"
               onChange={e => setMetric(e.target.value as BarMetric)}>
               <option value="ratio">gene ratio (k/n)</option>
               <option value="count">DEG count (k)</option>
               <option value="fold">fold enrichment</option>
             </select>
-          </Ctl>
-          <Ctl label="rank by / show">
+          </Ctl>}
+          {test === 'ora' && <Ctl label="rank by / show">
             <div className="flex items-center gap-1">
               <select className="input w-full py-1" value={rankBy} aria-label="Rank terms by"
                 onChange={e => setRankBy(e.target.value as any)}>
@@ -358,16 +421,21 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
                 aria-label="Terms shown"
                 onChange={e => setTopN(clamp(Math.round(+e.target.value), 1, 100))} />
             </div>
-          </Ctl>
+          </Ctl>}
         </div>
 
-        <p className="mt-3 text-sm text-slate-500">
+        {test === 'ora' && <p className="mt-3 text-sm text-slate-500">
           <b>{degUpper.size.toLocaleString()}</b>{query ? ' genes in this selection' : ' DEGs at these thresholds'} ({nDegInBg.toLocaleString()} in the annotated background of {nBg.toLocaleString()}) ·
           <b> {results.length.toLocaleString()}</b> enriched sets (padj &lt; 0.05: {nSig.toLocaleString()})
-        </p>
+        </p>}
       </div>
 
-      {results.length === 0 ? (
+      {test === 'gsea' && (
+        <Gsea deg={contrastDeg} contrast={contrast} index={index}
+          minSize={minSize} maxSize={maxSize} onSelectGene={onSelectGene} />
+      )}
+
+      {test === 'gsea' ? null : results.length === 0 ? (
         /* The empty state names WHICH filter emptied it. "No sets pass — loosen
            the thresholds" was one sentence for five different situations, and
            four of them were not about the thresholds at all. */

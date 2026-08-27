@@ -11,7 +11,8 @@ interface Props {
 const ANALYSES: { id: AnalysisId; label: string }[] = [
   { id: 'de', label: 'Differential expression' },
   { id: 'pca', label: 'Sample PCA' },
-  { id: 'ora', label: 'Enrichment' },
+  { id: 'ora', label: 'Enrichment (ORA)' },
+  { id: 'gsea', label: 'GSEA' },
   { id: 'sets', label: 'Gene-set activity' },
   { id: 'overlap', label: 'Comparison overlap' },
   { id: 'ranking', label: 'Combined-score ranking' },
@@ -20,7 +21,7 @@ const ANALYSES: { id: AnalysisId; label: string }[] = [
 export default function Methods({ bundle, contrast }: Props) {
   const state = useMethodsState()
   // Combined-score ranking is off unless the manuscript reports that ranking.
-  const [include, setInclude] = useState<Set<AnalysisId>>(new Set(['de', 'pca', 'ora', 'sets', 'overlap']))
+  const [include, setInclude] = useState<Set<AnalysisId>>(new Set(['de', 'pca', 'ora', 'gsea', 'sets', 'overlap']))
   const [style, setStyle] = useState<CiteStyle>('numbered')
   const [title, setTitle] = useState(DEFAULT_TITLE)
   const [copied, setCopied] = useState(false)

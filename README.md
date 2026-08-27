@@ -30,10 +30,14 @@ sets. Everything runs client-side — **your data never leaves your device** (no
   **Test for enrichment** runs ORA on it against MSigDB (with the genes those comparisons tested
   as the background), and **Save as gene set** adds it to the library, where it is scored per
   sample and tested exactly like a pasted one.
-- **Enrichment** — live, tunable over-representation analysis (ORA) against **the whole of
-  MSigDB**, human and mouse, fetched a collection at a time: set your padj / log2FC / direction
-  and watch enriched pathways update; drill into a term's genes and their stats; export every
-  set to CSV. Bars can show gene ratio, overlap count or fold enrichment.
+- **Enrichment — two tests over the same library.** **ORA** is live and tunable: set your padj /
+  log2FC / direction and watch enriched pathways update. **GSEA** (pre-ranked, Subramanian 2005)
+  ranks *every* tested gene — by DESeq2's Wald statistic, the combined score, signed −log10 p or
+  log2FC — and asks where each set sits in that ranking, so no cutoff is applied and a
+  coordinated shift too small to make any DEG list is still found. Signed NES, permutation
+  p-values with BH correction, the classic running-score figure and the leading-edge genes.
+  Both run against **the whole of MSigDB**, human and mouse, fetched a collection at a time;
+  both drill into a term's genes and export every set to CSV.
 - **Gene sets** — search the same library and score any set per sample, *or* define your own;
   get their DEG overlap, an ORA activity readout, and a per-sample module score (rank
   running-sum, mean rank, or mean z-score).
@@ -101,7 +105,7 @@ A citable DOI is minted per release via Zenodo; a software paper is in `paper/`.
 ```bash
 npm install
 node scripts/gen-sample.mjs   # regenerate the demo bundle in public/sample/
-npm test                      # bundle parsing, the ORA maths, the gene-set library, the Venn geometry
+npm test                      # bundle parsing, the ORA and GSEA maths, the gene-set library, the Venn geometry
 npm run dev                   # http://localhost:5173
 npm run build && npm run preview
 ```
@@ -117,6 +121,12 @@ release:
 Rscript scripts/export-genesets.R scratch-msigdb/gmt   # needs R + msigdbr
 node scripts/fetch-genesets.mjs                        # pack + write the manifest
 ```
+
+**Tumour phenotype** is MSigDB's mouse `M5:MPT`, and it is named for what it holds. The Broad
+calls it the *Tumor* Phenotype Ontology — 92 sets, every one a neoplasia term mined out of the
+Mammalian Phenotype Ontology — so offering it as "Mouse phenotype" directly under human's "Human
+phenotype" (the HPO: 5,793 sets, every phenotype there is) invited the reading that they are a
+species pair. They are not.
 
 **Metabolic** is a collection assembled here rather than published by the Broad: MSigDB has no
 metabolic collection, so `scripts/derive-metabolic.mjs` selects the metabolic pathways and

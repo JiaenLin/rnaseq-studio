@@ -130,6 +130,7 @@ export default function GeneSetSources({
               title={lastStanding(s.source)
                 ? 'The only collection left — turn another on, or add your own, before turning this off'
                 : `${s.nSets.toLocaleString()} sets · ${(s.bytes / 1e6).toFixed(2)} MB`
+                + (s.note ? ` · ${s.note}` : '')
                 + (s.projected ? ' · human sets mapped through orthologs, not a mouse annotation' : '')
                 + (s.derived ? ` · assembled from ${s.derived.join(', ')}` : '')
                 + (on ? '' : ' — not downloaded yet')}

@@ -334,13 +334,14 @@
           "projected": false
         },
         {
-          "source": "Mouse phenotype",
-          "file": "mouse.mouse-phenotype.gs",
+          "source": "Tumour phenotype",
+          "file": "mouse.tumour-phenotype.gs",
           "nSets": 92,
           "nGenes": 1018,
-          "bytes": 10594,
+          "bytes": 10596,
           "on": false,
-          "projected": false
+          "projected": false,
+          "note": "MSigDB M5:MPT — tumour phenotype terms mined out of the Mammalian Phenotype Ontology. Neoplasia only, not the whole MP ontology."
         },
         {
           "source": "Cell type",
