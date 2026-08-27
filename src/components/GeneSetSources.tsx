@@ -102,23 +102,43 @@ export default function GeneSetSources({
     if (!lib.collections.length || !background.length) return null
     const exactSyms = new Set<string>()
     for (const c of lib.collections) for (const g of c.symbols) exactSyms.add(g)
-    return { exact: matchRate(background, exactSyms), example: exampleSymbol(lib.collections) }
+    return {
+      exact: matchRate(background, exactSyms),
+      example: exampleSymbol(lib.collections),
+      /**
+       * A real symbol from THEIR data, not a placeholder inferred from
+       * `detected.species`.
+       *
+       * That inference was fine while detection WAS the casing vote and became
+       * wrong the moment accessions started deciding: a mouse bundle of ENSMUSG
+       * ids with upper-cased symbols detects as mouse, so the message rendered
+       * "your genes are spelled Gfap-style" to somebody looking at ABCA1.
+       */
+      mine: pickExample(background),
+    }
   }, [lib.collections, background])
 
   /**
-   * Two different problems, told apart by the two rates.
+   * Spelling is a RATIO OF A RATIO, and getting that wrong is what the comment
+   * on `covered` above is warning about — which did not stop me repeating it.
    *
-   * Casing only — the loose rate is healthy and the exact one is not — means the
-   * library is right and the spelling differs, which changes nothing about the
-   * answer because matching ignores case. Saying that plainly is the opposite
-   * of the old warning, which raised an alarm about the species.
+   * `covered` is coverage: how much of this bundle the ENABLED collections
+   * annotate. It moves when a chip is clicked and says nothing about a species.
+   * Comparing it to a threshold and concluding "wrong species" put "that
+   * usually means the wrong species is selected" underneath a species row that
+   * had just said "ENSMUSG accessions in this object" — 23% coverage, five
+   * collections on, a bundle that was unmistakably mouse.
    *
-   * Both low means the genes are not in this library however they are spelled,
-   * and THAT is when the species is worth doubting.
+   * The spelling question is only ever about the genes the library HAS: of
+   * those, how many are spelled the same way? Independent of how many
+   * collections are on, which is what makes it a fact about spelling.
+   *
+   * There is no "wrong library" test here any more. `wrongSpecies` below is
+   * that test, it is about evidence rather than arithmetic, and one is enough.
    */
   const loose = covered ?? 0
-  const casingOnly = !!spelling && loose > 0.35 && spelling.exact < loose * 0.5
-  const notThisLibrary = !!spelling && loose <= 0.35 && background.length > 200
+  const sameSpelling = spelling && loose > 0 ? spelling.exact / loose : 1
+  const casingOnly = !!spelling && loose > 0.02 && sameSpelling < 0.5
 
   const wrongSpecies = detected
     && detected.species !== species
@@ -235,10 +255,9 @@ export default function GeneSetSources({
         ))}
 
         {!customSets.length && (
-          <span className="text-xs text-slate-400">
-            Paste a Python dict, a GMT, or one{' '}
-            <span className="font-mono">Name: a, b, c</span> per line. They are tested and
-            corrected exactly as MSigDB&rsquo;s are.
+          <span className="text-xs text-slate-400"
+            title="A Python or R dict, JSON, a GMT, or one Name: a, b, c per line. Your sets are tested and BH-corrected exactly as MSigDB's are.">
+            <span className="font-mono">Name: a, b, c</span>, a dict, or a GMT.
           </span>
         )}
       </div>
@@ -257,40 +276,33 @@ export default function GeneSetSources({
         }}
       />
 
-      <p className="mt-2 text-xs text-slate-400">
+      {/* One line. It was three paragraphs saying what a set count, a tested
+          count and a coverage fraction each mean — every time, to a reader who
+          learned it once. The meanings live in the tooltip now; the numbers are
+          what change. */}
+      <p className="mt-2 text-xs text-slate-400"
+        title={'Tested = sets containing at least one gene this contrast measured; those are what '
+          + 'Benjamini–Hochberg is corrected across. Annotated = the fraction of your genes any '
+          + 'enabled collection knows, which is the background — turning more collections on raises it.'}>
         {lib.error
           ? <span className="text-amber-600 dark:text-amber-400">Could not load the gene sets — {lib.error}</span>
           : lib.loading
-            ? `Loading ${lib.total - lib.done} of ${lib.total} collection${lib.total === 1 ? '' : 's'}…`
+            ? `Loading ${lib.total - lib.done} of ${lib.total}…`
             : !chosen.length
               ? (customSets.length
-                // "No collection selected" was counting MSigDB and nothing
-                // else, so a reader who had turned every MSigDB collection off
-                // in order to test against their OWN sets was told there was
-                // nothing selected while their sets sat enabled beside the
-                // sentence.
-                ? <>Your own sets only — <b>{mine.toLocaleString()}</b> set{mine === 1 ? '' : 's'} in{' '}
-                  {customSets.length} collection{customSets.length === 1 ? '' : 's'}. No MSigDB
-                  collection is on, so nothing else is tested or corrected across.</>
+                // "No collection selected" counted MSigDB and nothing else, so
+                // a reader testing against their OWN sets was told there was
+                // nothing selected while their sets sat enabled beside it.
+                ? <>Your sets only — <b>{mine.toLocaleString()}</b> set{mine === 1 ? '' : 's'}, no MSigDB.</>
                 : 'No collection selected.')
               : index
-                ? <>
-                  MSigDB {index.release} · {nSets.toLocaleString()} sets, of which{' '}
-                  <b>{index.sets.length.toLocaleString()}</b> contain a gene this contrast
-                  tested. Those are the ones tested, and the ones corrected across.
-                </>
+                ? <>MSigDB {index.release} · {nSets.toLocaleString()} sets ·{' '}
+                  <b>{index.sets.length.toLocaleString()}</b> tested
+                  {covered !== null && <> · {(covered * 100).toFixed(0)}% of genes annotated</>}</>
                 : <>MSigDB · {nSets.toLocaleString()} sets in {chosen.length} collection
                   {chosen.length === 1 ? '' : 's'}
                   {mine > 0 && <>, and {mine.toLocaleString()} of your own</>}.</>}
       </p>
-
-      {covered !== null && (
-        <p className="mt-1 text-xs text-slate-400">
-          These collections annotate {(covered * 100).toFixed(0)}% of the genes this contrast
-          tested. That fraction is the annotated background, and turning more collections on
-          raises it.
-        </p>
-      )}
 
       {/*
         An assembled collection says what it was assembled FROM, and what
@@ -303,62 +315,46 @@ export default function GeneSetSources({
         tested twice — which is the price of the collection being a collection
         rather than a fold of the others, and not a price to charge silently.
       */}
+      {/* Only the parents actually switched on can be double-tested, and only
+          the double-testing is worth saying out loud — what the collection is
+          assembled from is a tooltip. */}
       {chosen.filter(s => s.derived?.length).map(s => {
-        // Only the parents actually switched on can be double-tested. A parent
-        // that is off contributes nothing to overlap with, so naming it here
-        // would be a warning about a thing that is not happening.
         const overlapping = s.derived!.filter(name => sources.includes(name))
+        if (!overlapping.length) return null
         return (
-          <p key={s.source} className="mt-1 text-xs text-slate-400">
-            <b>{s.source}</b> is a metabolic library assembled from {s.derived!.join(', ')} —{' '}
-            {s.nSets.toLocaleString()} sets under their own ids, so they are tested whatever
-            else is enabled.
-            {overlapping.length > 0 && (
-              <>
-                {' '}
-                <span className="text-amber-600 dark:text-amber-400">
-                  {overlapping.join(', ')} {overlapping.length === 1 ? 'is' : 'are'} on as well,
-                  so a term in both is tested twice and corrected across twice.
-                </span>{' '}
-                Switch {overlapping.length === 1 ? 'it' : 'them'} off to test metabolism alone.
-              </>
-            )}
+          <p key={s.source} className="mt-1 text-xs text-amber-600 dark:text-amber-400"
+            title={`${s.source} is assembled from ${s.derived!.join(', ')} and carries its own ids, `
+              + 'so its sets are tested whatever else is on. Switch the overlapping parents off to '
+              + 'test metabolism alone.'}>
+            <b>{s.source}</b> overlaps {overlapping.join(', ')} — those terms are tested twice.
           </p>
         )
       })}
 
+      {/* Kept, because a projection is a weaker claim and that must be visible
+          somewhere the reader is looking — but not restated at length. The chip
+          itself carries the full sentence in its own tooltip. */}
       {chosen.some(s => s.projected) && (
-        <p className="mt-1 text-xs text-slate-400">
-          {chosen.filter(s => s.projected).map(s => s.source).join(', ')} is human sets mapped
-          through orthologs, not a {lib.manifest?.species[species]?.label.toLowerCase() ?? species}{' '}
-          annotation — MSigDB publishes no native one. Read it as a weaker claim than the rest.
+        <p className="mt-1 text-xs text-slate-400"
+          title={`MSigDB publishes no native ${lib.manifest?.species[species]?.label.toLowerCase() ?? species} `
+            + 'KEGG, so this is the human collection mapped through orthologs. Read it as a weaker '
+            + 'claim than a native annotation.'}>
+          {chosen.filter(s => s.projected).map(s => s.source).join(', ')}: orthologs, not a native
+          annotation.
         </p>
       )}
 
-      {/* Ordered by how bad it is. A bundle can be in the wrong library, or in
-          the right one spelled differently, and those used to share a sentence
-          whose conclusion only fitted the first. */}
-      {notThisLibrary && spelling ? (
-        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-          <b>Only {(loose * 100).toFixed(0)}% of this bundle&rsquo;s genes are in the{' '}
-            {lib.manifest?.species[species]?.label ?? species} library at all</b>, however they are
-          spelled{detected ? ` — and ${detected.why}` : ''}. That usually means the wrong species is
-          selected above, or that these are accessions rather than symbols.
+      {wrongSpecies && detected ? (
+        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400"
+          title={`${detected.why}. Matching ignores case, so results appear either way — but against the wrong library they describe another organism.`}>
+          Gene names look <b>{detected.species}</b>; the{' '}
+          {lib.manifest?.species[species]?.label ?? species} library is selected.
         </p>
       ) : casingOnly && spelling ? (
-        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-          Your genes are spelled <b>{detected?.species === 'human' ? 'GFAP' : 'Gfap'}</b>-style and
-          this library spells them <b>{spelling.example}</b>-style
-          — {(spelling.exact * 100).toFixed(0)}% match exactly, {(loose * 100).toFixed(0)}% ignoring
-          case. <b>Matching ignores case, so the results below are this library&rsquo;s annotation</b>
-          {' '}and nothing is lost. Switch the species above only if the data really is the other one.
-        </p>
-      ) : wrongSpecies && detected ? (
-        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-          <b>Your gene names look {detected.species}</b> — {detected.why} — but the{' '}
-          {lib.manifest?.species[species]?.label ?? species} library is selected. Matching ignores
-          case, so results will still appear; if the species is genuinely wrong they will be
-          answering a question about a different organism.
+        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400"
+          title={`${(spelling.exact * 100).toFixed(0)}% of your genes match this library exactly, ${(loose * 100).toFixed(0)}% ignoring case. Matching ignores case, so nothing is lost.`}>
+          Your genes read <b>{spelling.mine ?? 'ABCA1'}</b>, these{' '}
+          <b>{spelling.example}</b> — case is ignored, results unaffected.
         </p>
       ) : null}
     </div>
@@ -375,8 +371,20 @@ export default function GeneSetSources({
  */
 function exampleSymbol(collections: readonly Collection[]): string | null {
   for (const c of collections) {
-    for (const g of c.symbols) if (/^[A-Za-z]{3,8}$/.test(g)) return g
+    const g = pickExample(c.symbols)
+    if (g) return g
   }
+  return null
+}
+
+/**
+ * The first symbol whose casing says something.
+ *
+ * Letters only and at least three of them: "AI597479" and "2900092N22Rik" are
+ * real mouse symbols that would be shown as evidence of nothing.
+ */
+function pickExample(symbols: readonly string[]): string | null {
+  for (const g of symbols) if (/^[A-Za-z]{3,8}$/.test(g)) return g
   return null
 }
 
@@ -415,24 +423,21 @@ export function LibraryPicker({ library, index, background, recorded }: {
             the one thing it must never be is silent about why — a reader who
             disagrees needs to know what the guess was based on before they
             override it. */}
-        <span className={origin === 'default' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}>
+        {/* What chose it, and how the sets spell a gene. Both are one glance
+            each: "are these human gene sets?" is a fair question about a
+            library you cannot see, and one real symbol answers it. */}
+        <span className={origin === 'default' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}
+          title={`${why}. Override with the select if it is wrong.`}>
           {why}
-          {origin === 'accession' && !conflict && <> — so this was selected for you</>}
-          {/* Said once, permanently, rather than only when something is wrong.
-              "Are these human gene sets?" is a fair question to have about a
-              library you cannot see, and one example symbol answers it at a
-              glance — Gfap or GFAP, there is no third option. */}
-          {libExample && <> · these sets spell genes <b className="font-semibold">{libExample}</b>-style</>}
+          {libExample && <> · sets spell <b className="font-semibold">{libExample}</b></>}
         </span>
       </div>
       {conflict && (
-        <p className="-mt-1.5 mb-3 text-xs text-amber-600 dark:text-amber-400">
-          <b>This bundle disagrees with itself.</b> Its metadata records{' '}
-          {recorded ?? library.recorded} and its accessions are{' '}
-          {detected.species === 'mouse' ? 'ENSMUSG' : 'ENSG'}. The accessions decide it — they are
-          the identifier rather than a field somebody typed — so the{' '}
-          {lib.manifest?.species[species]?.label ?? species} library is loaded. Override above if
-          that is wrong, and fix <code className="font-mono">meta.species</code> in the bundle.
+        <p className="-mt-1.5 mb-3 text-xs text-amber-600 dark:text-amber-400"
+          title={'An accession is the identifier; meta.species is a field somebody typed. The '
+            + 'accessions decide it. Override with the select if that is wrong, and fix meta.species.'}>
+          <b>meta.species says {recorded}</b>, the accessions say{' '}
+          {detected.species === 'mouse' ? 'ENSMUSG' : 'ENSG'} — accessions win.
         </p>
       )}
       <GeneSetSources

@@ -347,16 +347,14 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
                   className={`pressable rounded-md px-2.5 py-1 text-xs font-medium transition ${test === m
                     ? 'bg-indigo-500 text-white'
                     : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-100'}`}
-                  onClick={() => setMethod(m)}>
+                  onClick={() => setMethod(m)}
+                  title={m === 'ora'
+                    ? 'Tests the genes that clear your cutoffs against each set. The answer moves with the cutoffs, and a coordinated shift too small to clear them is invisible.'
+                    : 'Ranks every tested gene and asks where each set sits in that ranking. No cutoff, nothing discarded, and the answer is signed.'}>
                   {m === 'ora' ? 'Over-representation' : 'GSEA'}
                 </button>
               ))}
             </div>
-            <span className="min-w-0 flex-1 text-xs text-slate-400">
-              {test === 'ora'
-                ? 'Tests the genes that clear your cutoffs against each set. The answer moves with the cutoffs, and a coordinated shift too small to clear them is invisible.'
-                : 'Ranks every tested gene and asks where each set sits in that ranking. No cutoff, nothing discarded, and the answer is signed.'}
-            </span>
           </div>
         )}
 
@@ -475,9 +473,9 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
               downloadName={query ? `ORA_${fileSlug(query.label)}` : `ORA_${contrast.id}_${direction}`}
             />
-            <p className="mt-1 text-center text-xs text-slate-400">
-              Live over-representation (hypergeometric + BH). Colour = −log10 p.adjust; the scale
-              always reaches past padj 0.05, so a page where nothing is significant looks like one.
+            <p className="mt-1 text-center text-xs text-slate-400"
+              title={'Hypergeometric + Benjamini–Hochberg. Colour = −log10 p.adjust, on a scale that '
+                + 'always reaches past padj 0.05 — so a page where nothing is significant looks like one.'}>
               Click a bar to list its DEGs.
             </p>
           </div>
@@ -487,11 +485,15 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
               below the size floor and four contain no DEG from this list —
               which ORA drops silently, because a set with no overlap has
               nothing to report. */}
-          <p className="px-1 font-mono text-xs text-slate-400">
-            {inRange.of.toLocaleString()} sets contain a tested gene · {inRange.n.toLocaleString()} within{' '}
-            {minSize}–{maxSize} genes · {results.length.toLocaleString()} contain one of the{' '}
-            {nDegInBg.toLocaleString()} annotated DEGs · showing {top.length}. Gene ratio = k/n,
-            fold = (k/n) ÷ (K/N). The CSV has every set.
+          {/* The whole funnel, because a reader who sees two bars from seven
+              sets needs to know where the other five went — but as numbers,
+              not as a paragraph explaining what each number means. */}
+          <p className="px-1 font-mono text-xs text-slate-400"
+            title={'Sets containing a tested gene, then those inside the size window, then those '
+              + 'overlapping an annotated DEG, then those drawn. Gene ratio = k/n, fold = (k/n) ÷ (K/N). '
+              + 'The CSV has every set.'}>
+            {inRange.of.toLocaleString()} → {inRange.n.toLocaleString()} in size →{' '}
+            {results.length.toLocaleString()} overlapping → showing {top.length}
           </p>
 
           {selected && (

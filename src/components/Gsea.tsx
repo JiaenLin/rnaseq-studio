@@ -171,15 +171,15 @@ export default function Gsea({ deg, contrast, index, minSize, maxSize, onSelectG
         </div>
       </div>
 
-      <p className="text-sm text-slate-500">
-        <b>{ranking.genes.length.toLocaleString()}</b> genes ranked
+      <p className="text-sm text-slate-500" title={metricInfo?.blurb}>
+        <b>{ranking.genes.length.toLocaleString()}</b> ranked
         {ranking.dropped > 0 && (
-          <span className="text-slate-400">
-            {' '}({ranking.dropped.toLocaleString()} had no {metric === 'stat' ? 'lfcSE' : 'p-value'} and could not be)
+          <span className="text-slate-400"
+            title={`${ranking.dropped.toLocaleString()} rows had no ${metric === 'stat' ? 'lfcSE' : 'p-value'}, so the metric could not be computed for them.`}>
+            {' '}(−{ranking.dropped.toLocaleString()})
           </span>
-        )} · <b>{sets.length.toLocaleString()}</b> sets between {minSize} and {maxSize} genes
+        )} · <b>{sets.length.toLocaleString()}</b> sets
         {fresh && <> · <b>{nSig.toLocaleString()}</b> at padj &lt; 0.05</>}
-        <span className="block text-xs text-slate-400">{metricInfo?.blurb}</span>
       </p>
 
       {run.err && <p className="text-sm text-red-500">Failed: {run.err}</p>}
@@ -187,15 +187,12 @@ export default function Gsea({ deg, contrast, index, minSize, maxSize, onSelectG
       {!fresh && !run.busy && (
         <div className="card p-10 text-center text-sm text-slate-400">
           {!sets.length
-            ? `No set has between ${minSize} and ${maxSize} of this contrast's genes, so there is
-               nothing to test. Widen the size window, or switch on another collection.`
+            ? `No set has between ${minSize} and ${maxSize} of this contrast's genes. Widen the window, or switch on a collection.`
+            // The settings moved under an existing result. Saying so beats
+            // showing the old numbers under the new labels.
             : results
-              // The settings moved under an existing result. Saying so beats
-              // showing the old numbers under the new labels.
-              ? 'The ranking or the library has changed since that run, so its numbers no longer '
-                + 'describe what is selected. Run GSEA again.'
-              : 'GSEA walks the whole ranking rather than a thresholded list, and builds its null by '
-                + 'permutation — a few seconds rather than a slider. Press Run GSEA.'}
+              ? 'The ranking or the library changed — those numbers no longer describe this. Run again.'
+              : 'Press Run GSEA. It permutes, so it takes a few seconds.'}
         </div>
       )}
 
@@ -211,17 +208,16 @@ export default function Gsea({ deg, contrast, index, minSize, maxSize, onSelectG
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
               downloadName={`GSEA_${contrast.id}_${metric}`}
             />
-            <p className="mt-1 text-center text-xs text-slate-400">
-              Normalised enrichment score. Positive = the set sits toward the top of the ranking,
-              which for this contrast means <b>{contrast.numerator}</b>; negative means{' '}
-              <b>{contrast.denominator}</b>. Click a bar for its running score.
+            <p className="mt-1 text-center text-xs text-slate-400"
+              title={`Normalised enrichment score. Positive = the set sits toward the top of the ranking, which for this contrast is ${contrast.numerator}; negative is ${contrast.denominator}. ✱ marks padj < 0.05.`}>
+              Click a bar for its running score.
             </p>
           </div>
 
-          <p className="px-1 font-mono text-xs text-slate-400">
-            {sets.length.toLocaleString()} sets tested · {nperm.toLocaleString()} permutations per set
-            size · showing the {top.length} largest |NES|. Sets of one size share one null, which is
-            exact — the null depends on the ranking and the size and on nothing else.
+          <p className="px-1 font-mono text-xs text-slate-400"
+            title={'Sets of one size share one null, which is exact rather than binned: under '
+              + 'gene-set permutation the null depends on the ranking and the set size and on nothing else.'}>
+            {sets.length.toLocaleString()} sets · {nperm.toLocaleString()} permutations · top {top.length}
           </p>
 
           {selected && curve && (
@@ -366,10 +362,9 @@ function LeadingEdge({ genes, ranking, up, onSelectGene }: {
         onClick={() => setOpen(o => !o)}>
         {open ? '▾' : '▸'} Leading edge — {genes.length.toLocaleString()} gene{genes.length === 1 ? '' : 's'}
       </button>
-      <p className="mt-1 text-xs text-slate-400">
-        The members between the {up ? 'top' : 'bottom'} of the ranking and the point where the running
-        score peaked: the part of the set that produced the score. It is <b>not</b> a list of
-        significant genes — GSEA never applied a threshold to any of them.
+      <p className="mt-1 text-xs text-slate-400"
+        title={`The members between the ${up ? 'top' : 'bottom'} of the ranking and the peak of the running score — the part of the set that produced it.`}>
+        Not a list of significant genes: GSEA thresholded nothing.
       </p>
       {open && (
         <div className="mt-2 max-h-72 overflow-auto rounded-lg border border-slate-100 dark:border-slate-800">
