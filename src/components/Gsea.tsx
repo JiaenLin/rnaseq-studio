@@ -6,6 +6,7 @@ import { RANK_METRICS, canRank, rankGenes, runGsea, runningCurve, setsFromIndex 
 import { SIG_COLORS, contrastTitle } from '../lib/palette'
 import { reportGsea, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
+import { tickLabels, tickRows } from '../lib/labels'
 
 interface Props {
   deg: DEGRow[]
@@ -204,7 +205,7 @@ export default function Gsea({ deg, contrast, index, minSize, maxSize, onSelectG
             </div>
             <Plot
               data={[nesTrace(top, contrast)]}
-              layout={nesLayout(top.length, contrast)}
+              layout={nesLayout(top.map(r => r.name), contrast)}
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
               downloadName={`GSEA_${contrast.id}_${metric}`}
             />
@@ -257,7 +258,10 @@ function nesTrace(rows: GseaResult[], contrast: Contrast) {
   return {
     type: 'bar', orientation: 'h',
     x: bars.map(r => r.nes),
-    y: bars.map(r => trunc(r.name, 46)),
+    // Wrapped rather than cut at 46 characters: most MSigDB names fit on two
+    // lines, and the ones that did not were losing words a second line had room
+    // for.
+    y: tickLabels(bars.map(r => r.name)),
     customdata: bars.map(r => r.id),
     text: bars.map(r => (r.padj < 0.05 ? '✱' : '')),
     textposition: 'outside',
@@ -275,9 +279,9 @@ function nesTrace(rows: GseaResult[], contrast: Contrast) {
   }
 }
 
-const nesLayout = (n: number, contrast: Contrast) => ({
+const nesLayout = (names: readonly string[], contrast: Contrast) => ({
   title: contrastTitle(`GSEA — ${contrast.label}`),
-  height: Math.max(280, 34 * n + 110),
+  height: Math.max(280, names.length * (14 + tickRows(tickLabels(names)) * 14) + 110),
   margin: { t: 46, r: 30, b: 46, l: 300 },
   xaxis: {
     title: `NES   ←  ${contrast.denominator}      ${contrast.numerator}  →`,

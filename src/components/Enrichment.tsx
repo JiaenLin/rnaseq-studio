@@ -9,6 +9,7 @@ import Gsea from './Gsea.tsx'
 import { contrastTitle } from '../lib/palette'
 import { reportOra, useReport } from '../lib/methods'
 import Plot from '../lib/Plot'
+import { tickLabels, tickRows } from '../lib/labels'
 
 interface Props {
   bundle: Bundle
@@ -469,7 +470,7 @@ function CustomORA({ bundle, contrast, library, query, onClearQuery, onSelectGen
             </div>
             <Plot
               data={[barTrace(bars, metric, nDegInBg)]}
-              layout={barLayout(bars.length, query ? query.label : contrast.label, metric)}
+              layout={barLayout(bars.map(r => r.name), query ? query.label : contrast.label, metric)}
               onPointClick={p => p?.customdata && setTermId(p.customdata)}
               downloadName={query ? `ORA_${fileSlug(query.label)}` : `ORA_${contrast.id}_${direction}`}
             />
@@ -611,8 +612,9 @@ function barTrace(bars: ORAResult[], metric: BarMetric, nQuery: number) {
   return {
     type: 'bar', orientation: 'h',
     x: bars.map(value),
-    // Full name, word-wrapped onto multiple lines so long MSigDB terms aren't cut off.
-    y: bars.map(t => wrapLabel(t.name, 40)),
+    // Wrapped, capped at two lines and kept unique — see tickLabels. The
+    // complete name is in the hover below.
+    y: tickLabels(bars.map(t => t.name)),
     customdata: bars.map(t => t.id),
     // Hover shows the complete, un-wrapped name plus every quantity, so the
     // three bar metrics are one selector rather than three separate figures.
@@ -636,10 +638,14 @@ function barTrace(bars: ORAResult[], metric: BarMetric, nQuery: number) {
     },
   }
 }
-function barLayout(n: number, label: string, metric: BarMetric) {
+function barLayout(names: readonly string[], label: string, metric: BarMetric) {
+  const labels = tickLabels(names)
+  // The row has to fit the tallest label that is actually drawn. Fixed at 26 it
+  // fitted one line, and a two-line name printed through its neighbours.
+  const row = 14 + tickRows(labels) * 14
   return {
     title: contrastTitle(`Over-representation — ${label}`),
-    margin: { t: 34, r: 20, b: 40, l: 300 }, height: Math.max(240, n * 26 + 80),
+    margin: { t: 34, r: 20, b: 40, l: 300 }, height: Math.max(240, names.length * row + 80),
     xaxis: { title: METRIC_AXIS[metric] }, yaxis: { automargin: true, tickfont: { size: 11 } },
     paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'system-ui, sans-serif' },
   }
@@ -662,22 +668,6 @@ const fileSlug = (s: string) =>
   s.replace(/[^\w+-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'selection'
 
 const clamp = (v: number, lo: number, hi: number) => (Number.isNaN(v) ? lo : Math.max(lo, Math.min(hi, v)))
-// Word-wrap a long label to <=width per line (breaking on _ / - and spaces, hard-
-// wrapping any single run that is still too long) using <br> for Plotly tick text.
-function wrapLabel(s: string, width: number): string {
-  if (s.length <= width) return s
-  const lines: string[] = []
-  let line = ''
-  for (const tok of s.split(/(?=[_/\- ])/)) {
-    if (line && (line + tok).length > width) { lines.push(line); line = tok.replace(/^[_/\- ]/, '') }
-    else line += tok
-  }
-  if (line) lines.push(line)
-  return lines.flatMap(l => {
-    if (l.length <= width) return [l]
-    return l.match(new RegExp(`.{1,${width}}`, 'g')) || [l]
-  }).join('<br>')
-}
 /**
  * A p-value, and what to print when a double could not hold it.
  *

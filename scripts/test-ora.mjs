@@ -7,6 +7,7 @@
 
 import { bh, bhNlp, hyperTail, logHyperTail, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
 import { indexFor, parseSets } from '../src/lib/msigdb.ts'
+import { tickLabels, tickRows, wrapLabel } from '../src/lib/labels.ts'
 import { detectSpecies, speciesOfMeta } from '../src/lib/species.ts'
 
 let failed = 0
@@ -163,6 +164,40 @@ console.log('\nTHE SPECIES A BUNDLE CAN BE READ FROM')
   const mute = detectSpecies(['1E5', '12345', 'A1', '9'])
   check('nothing to read is not a vote', mute.from, 'default')
   check('and it says so', mute.support, 0)
+}
+
+console.log('\nA BAR CHART\u2019S TICK LABELS')
+{
+  // The name that broke it. Wrapped to as many lines as it needed, in a row
+  // sized for one, it printed straight through the two names above and below.
+  const monster = 'Adaptive immune response based on somatic recombination of immune '
+    + 'receptors built from immunoglobulin superfamily domains'
+  const wrapped = wrapLabel(monster)
+  check('a long name is capped at two lines', wrapped.split('<br>').length, 2)
+  check('and says it was cut', wrapped.endsWith('\u2026'), true)
+  check('a short name is left alone', wrapLabel('B cell mediated immunity'),
+    'B cell mediated immunity')
+  check('a medium one wraps rather than being cut',
+    wrapLabel('Adaptive immune response based on somatic recombination').split('<br>').length, 2)
+
+  // The row height is derived from the tallest label DRAWN, so a chart of short
+  // names does not get two-line spacing it has no use for.
+  check('short names need one row', tickRows(tickLabels(['Trachea development', 'Rrna transcription'])), 1)
+  check('a long one takes the whole chart to two', tickRows(tickLabels(['Protein folding', monster])), 2)
+
+  // The silent one. Plotly's category axis is keyed by the label string, so two
+  // names that elide to the same text become ONE category and one bar vanishes.
+  const twins = [
+    'Regulation of transcription from RNA polymerase II promoter in response to hypoxia',
+    'Regulation of transcription from RNA polymerase II promoter in response to stress',
+  ]
+  const ticks = tickLabels(twins)
+  check('two names that elide the same way stay two labels',
+    new Set(ticks).size, 2)
+  check('and the difference is invisible',
+    ticks.map(t => t.replace(/\u200B/g, '')), [ticks[0], ticks[0]])
+  check('a name repeated outright is still two categories',
+    new Set(tickLabels(['Cell cycle', 'Cell cycle'])).size, 2)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll ORA tests passed\n')
