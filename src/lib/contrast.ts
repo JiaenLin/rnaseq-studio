@@ -32,6 +32,7 @@
 // it can honestly offer.
 
 import type { Bundle, Contrast, SampleRow } from '../types'
+import type { Engine } from './deseq.ts'
 import { samplesInGroups } from './design.ts'
 
 /**
@@ -120,10 +121,19 @@ export function relevantExclusions(
  */
 export function comparisonKey(
   bundle: Bundle, control: readonly string[], test: readonly string[], excluded: readonly string[],
+  /**
+   * The test that produced it. Part of the key, because two engines on one pair
+   * are two results: without it, running limma-voom and then DESeq2 on the same
+   * groups hits the first run's cache entry and shows its numbers under the
+   * second one's badge — the exact defect the exclusions were added to this key
+   * to prevent, one field along.
+   */
+  engine: Engine = 'limma',
 ): string {
   const gone = relevantExclusions(bundle, control, test, excluded)
   return `${[...test].join('+')}|${[...control].join('+')}`
     + (gone.length ? `|-${gone.join(',')}` : '')
+    + `|${engine}`
 }
 
 export type Source = 'bundle' | 'computed' | 'computable' | 'unavailable'
@@ -166,10 +176,11 @@ export function comparisonState(
   test: readonly string[],
   excluded: readonly string[],
   computedKeys: Record<string, unknown>,
+  engine: Engine = 'limma',
 ): ComparisonState {
   const nControl = samplesInGroups(bundle.counts.samples, bundle.samples, control, excluded).length
   const nTest = samplesInGroups(bundle.counts.samples, bundle.samples, test, excluded).length
-  const key = comparisonKey(bundle, control, test, excluded)
+  const key = comparisonKey(bundle, control, test, excluded, engine)
   const gone = relevantExclusions(bundle, control, test, excluded)
   const base = { nControl, nTest }
 

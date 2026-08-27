@@ -12,6 +12,7 @@
 // write-up needs.
 
 import { useEffect, useSyncExternalStore } from 'react'
+import { isComputedContrast } from './deseq.ts'
 import type { Bundle, Contrast } from '../types'
 
 export const STUDIO_VERSION = 'v1.0.0'
@@ -355,8 +356,21 @@ export function buildDoc(
   const { meta } = bundle
   // A contrast computed in-app is DESeq2 regardless of what produced the bundle,
   // so the Methods text must name DESeq2 rather than the bundle's engine.
-  const eng = contrast.id.startsWith('~deseq2:')
-    ? { name: 'DESeq2', keys: ['deseq2'], unknown: false }
+  /**
+   * A contrast computed HERE is named for the engine that computed it.
+   *
+   * It used to say DESeq2 unconditionally, which was true while DESeq2 was the
+   * only thing this app could run. It is not any more — limma-voom is the
+   * default, because it is ten times faster — and a Methods paragraph naming
+   * the wrong test is the worst kind of wrong this file can be.
+   *
+   * The engine is the last segment of the synthetic id; see App's `active`.
+   */
+  const ranHere = isComputedContrast(contrast.id)
+  const eng = ranHere
+    ? (contrast.id.endsWith('|deseq2')
+      ? { name: 'DESeq2', keys: ['deseq2'], unknown: false }
+      : { name: 'limma-voom', keys: ['voom', 'limma'], unknown: false })
     : engineName(meta.engine, meta.counts_unit)
   const nNum = bundle.samples.filter(x => x.condition === contrast.numerator).length
   const nDen = bundle.samples.filter(x => x.condition === contrast.denominator).length
@@ -373,7 +387,13 @@ export function buildDoc(
     sentences.push(
       `Gene-level counts${species} were analysed with ${eng.name}${cite} to compare ` +
       `${contrast.numerator} against ${contrast.denominator}${groups}, with ${contrast.denominator} as the ` +
-      `reference; genes with a Benjamini–Hochberg{{bh}} adjusted p-value below ${fmtP(s.de.padjThr)} and an ` +
+      `reference` +
+      // Only for a run performed here. A contrast the pipeline exported was
+      // filtered however that pipeline filters, which this app cannot know.
+      (ranHere
+        ? ', after removing genes without at least 10 counts in as many samples as the smaller group'
+        : '') +
+      `; genes with a Benjamini–Hochberg{{bh}} adjusted p-value below ${fmtP(s.de.padjThr)} and an ` +
       `absolute log2 fold-change of at least ${fmtL(s.de.lfcThr)} were considered differentially expressed ` +
       `(${fmtN(deg.n)} genes; ${fmtN(deg.up)} up, ${fmtN(deg.down)} down).`)
     if (!s.seen.de) unseen.push('differential expression')
