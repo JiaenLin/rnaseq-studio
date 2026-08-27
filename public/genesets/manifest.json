@@ -21,7 +21,7 @@
           "file": "human.metabolic.gs",
           "nSets": 2610,
           "nGenes": 7578,
-          "bytes": 229177,
+          "bytes": 228043,
           "on": false,
           "projected": false,
           "derived": [
@@ -69,7 +69,7 @@
           "file": "human.pid.gs",
           "nSets": 196,
           "nGenes": 2534,
-          "bytes": 24911,
+          "bytes": 24843,
           "on": true,
           "projected": false
         },
@@ -256,7 +256,7 @@
           "file": "mouse.metabolic.gs",
           "nSets": 2360,
           "nGenes": 7080,
-          "bytes": 211596,
+          "bytes": 210728,
           "on": false,
           "projected": false,
           "derived": [
@@ -338,7 +338,7 @@
           "file": "mouse.tumour-phenotype.gs",
           "nSets": 92,
           "nGenes": 1018,
-          "bytes": 10596,
+          "bytes": 10577,
           "on": false,
           "projected": false,
           "note": "MSigDB M5:MPT — tumour phenotype terms mined out of the Mammalian Phenotype Ontology. Neoplasia only, not the whole MP ontology."

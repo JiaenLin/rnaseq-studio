@@ -133,9 +133,29 @@ const labelFor = (file, species) =>
  * and is what the CSV export carries, so nothing is lost by making the screen
  * readable.
  */
+/**
+ * Only a prefix that REPEATS THE COLLECTION comes off.
+ *
+ * PID and MP were missing, and MP is the one that shows the rule: HP_ comes off
+ * human phenotype sets and MP_ stayed on the mouse ones, so every set of that
+ * collection read "Mp abnormal tumor vascularization" while its human
+ * counterpart read "11 pairs of ribs". METABOLIC_ is deliberately NOT here, though it leads
+ * 100% of the derived collection's ids: derive-metabolic.mjs names those sets
+ * itself, as "Adipogenesis (Hallmark)", so that each one says which parent it
+ * was selected out of. Adding it and re-deriving the names replaced 4 970 of
+ * those with "Hallmark adipogenesis" — worse, and caught only by reading the
+ * diff.
+ *
+ * What is NOT here matters as much. GAVISH_, CUI_ and GENES_ each lead 100% of
+ * their collection's ids and none is a prefix: the first two are the authors of
+ * the study the sets come from, which is the citation, and the third is the
+ * first word of "genes correlated with ABL2 deletion". Stripping a token
+ * because it is common would delete those. Checked: PID_, MP_ and METABOLIC_
+ * occur in no collection but their own.
+ */
 export function readableName(systematic) {
   const body = systematic.replace(
-    /^(HALLMARK|GOBP|GOMF|GOCC|KEGG_MEDICUS|KEGG|REACTOME|WP|BIOCARTA|HP|MODULE)_/, '')
+    /^(HALLMARK|GOBP|GOMF|GOCC|KEGG_MEDICUS|KEGG|REACTOME|WP|BIOCARTA|HP|MP|PID|MODULE)_/, '')
   const words = body.replace(/_/g, ' ').toLowerCase()
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
@@ -175,6 +195,20 @@ export function compact(gmt, { species, source, release }) {
     nGenes: dict.size,
   }
 }
+
+/**
+ * Everything below packs; everything above is pure and exported.
+ *
+ * Guarded because the exports are the testable half and importing them used to
+ * RUN the packer — which exits 1 when there is no GMT export, so the only way
+ * to test `readableName` against the real regex was to copy the regex into the
+ * test. A test that copies the thing it is testing passes while the original is
+ * wrong, which is how a prefix stayed unstripped for a whole collection.
+ */
+const RUN_AS_SCRIPT = import.meta.main
+  ?? (process.argv[1] && import.meta.url.endsWith(basename(process.argv[1])))
+if (!RUN_AS_SCRIPT) { /* imported for its exports */ }
+else {
 
 if (!existsSync(IN)) {
   console.error(`No GMT export at ${IN}.\n`
@@ -243,3 +277,5 @@ const on = Object.values(manifest.species)
 console.log(`\n  total     gmt ${(rawTotal / 1e6).toFixed(1)} MB -> gz ${(gzTotal / 1e6).toFixed(1)} MB committed`)
 console.log(`  on first open, per species: about ${(on / 2 / 1e6).toFixed(1)} MB`)
 console.log(`  wrote ${OUT}/manifest.json`)
+
+}

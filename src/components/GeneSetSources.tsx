@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { LibraryControl, LibraryState, SetIndex } from '../lib/genesets.ts'
 import { collectionToText, type Collection } from '../lib/msigdb.ts'
 import SetEditor from './SetEditor.tsx'
-import type { Detection, Species } from '../lib/species.ts'
+import { matchRate, type Detection, type Species } from '../lib/species.ts'
 
 /**
  * Which MSigDB collections are in play, and what state the library is in.
@@ -81,6 +81,45 @@ export default function GeneSetSources({
    * symbols were upper-cased upstream genuinely looks human, and shouting at
    * someone who has correctly overridden that is worse than staying quiet.
    */
+  /**
+   * Does this bundle SPELL genes the way this library spells them?
+   *
+   * `covered` above ignores case, because ORA does — it has to, exporters vary.
+   * That is what makes it useless for this question: a mouse object run against
+   * the human library still matches 96% of its genes case-insensitively. This
+   * one is case-SENSITIVE, which is the whole point: Gfap is mouse MSigDB's
+   * spelling and GFAP is human's, so comparing exactly separates the two
+   * libraries where comparing loosely cannot.
+   *
+   * `matchRate` was written for this, documented at length, and called from
+   * nowhere. What ran instead was a guess from casing that told a mouse bundle
+   * with upper-cased symbols it "looks like human" and that its results "will
+   * be answering a question about a different species" — which was false, and
+   * is the sentence that has been read as this app shipping human gene sets
+   * under a mouse label.
+   */
+  const spelling = useMemo(() => {
+    if (!lib.collections.length || !background.length) return null
+    const exactSyms = new Set<string>()
+    for (const c of lib.collections) for (const g of c.symbols) exactSyms.add(g)
+    return { exact: matchRate(background, exactSyms), example: exampleSymbol(lib.collections) }
+  }, [lib.collections, background])
+
+  /**
+   * Two different problems, told apart by the two rates.
+   *
+   * Casing only — the loose rate is healthy and the exact one is not — means the
+   * library is right and the spelling differs, which changes nothing about the
+   * answer because matching ignores case. Saying that plainly is the opposite
+   * of the old warning, which raised an alarm about the species.
+   *
+   * Both low means the genes are not in this library however they are spelled,
+   * and THAT is when the species is worth doubting.
+   */
+  const loose = covered ?? 0
+  const casingOnly = !!spelling && loose > 0.35 && spelling.exact < loose * 0.5
+  const notThisLibrary = !!spelling && loose <= 0.35 && background.length > 200
+
   const wrongSpecies = detected
     && detected.species !== species
     && (detected.from === 'accession' || (detected.from === 'symbols' && detected.support > 0.8))
@@ -296,15 +335,49 @@ export default function GeneSetSources({
         </p>
       )}
 
-      {wrongSpecies && detected && (
+      {/* Ordered by how bad it is. A bundle can be in the wrong library, or in
+          the right one spelled differently, and those used to share a sentence
+          whose conclusion only fitted the first. */}
+      {notThisLibrary && spelling ? (
         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
-          <b>These sets are for {lib.manifest?.species[species]?.label ?? species}, and this
-            bundle looks like {detected.species}</b> — {detected.why}. Matching ignores case, so
-          results will still appear; they will be answering a question about a different species.
+          <b>Only {(loose * 100).toFixed(0)}% of this bundle&rsquo;s genes are in the{' '}
+            {lib.manifest?.species[species]?.label ?? species} library at all</b>, however they are
+          spelled{detected ? ` — and ${detected.why}` : ''}. That usually means the wrong species is
+          selected above, or that these are accessions rather than symbols.
         </p>
-      )}
+      ) : casingOnly && spelling ? (
+        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+          Your genes are spelled <b>{detected?.species === 'human' ? 'GFAP' : 'Gfap'}</b>-style and
+          this library spells them <b>{spelling.example}</b>-style
+          — {(spelling.exact * 100).toFixed(0)}% match exactly, {(loose * 100).toFixed(0)}% ignoring
+          case. <b>Matching ignores case, so the results below are this library&rsquo;s annotation</b>
+          {' '}and nothing is lost. Switch the species above only if the data really is the other one.
+        </p>
+      ) : wrongSpecies && detected ? (
+        <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+          <b>Your gene names look {detected.species}</b> — {detected.why} — but the{' '}
+          {lib.manifest?.species[species]?.label ?? species} library is selected. Matching ignores
+          case, so results will still appear; if the species is genuinely wrong they will be
+          answering a question about a different organism.
+        </p>
+      ) : null}
     </div>
   )
+}
+
+/**
+ * One symbol from the loaded library, chosen to show its casing.
+ *
+ * A real gene rather than a made-up "Gfap": the reader is being told what THIS
+ * library holds, and a placeholder would be a claim about it rather than a
+ * sample of it. Two letters minimum and no digits, because "AI597479" and
+ * "2900092N22Rik" are real mouse symbols that say nothing about case.
+ */
+function exampleSymbol(collections: readonly Collection[]): string | null {
+  for (const c of collections) {
+    for (const g of c.symbols) if (/^[A-Za-z]{3,8}$/.test(g)) return g
+  }
+  return null
 }
 
 /**
@@ -324,6 +397,7 @@ export function LibraryPicker({ library, index, background, recorded }: {
   recorded?: string
 }) {
   const { lib, species, onSpecies, sources, onSources, customSets, onCustomSets, detected } = library
+  const libExample = useMemo(() => exampleSymbol(lib.collections), [lib.collections])
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3 text-xs dark:border-slate-800">
@@ -340,6 +414,11 @@ export function LibraryPicker({ library, index, background, recorded }: {
           {library.recorded
             ? `this bundle records ${recorded}`
             : `not recorded in the bundle; the gene names look ${detected.species}`}
+          {/* Said once, permanently, rather than only when something is wrong.
+              "Are these human gene sets?" is a fair question to have about a
+              library you cannot see, and one example symbol answers it at a
+              glance — Gfap or GFAP, there is no third option. */}
+          {libExample && <> · these sets spell genes <b className="font-semibold">{libExample}</b>-style</>}
         </span>
       </div>
       <GeneSetSources

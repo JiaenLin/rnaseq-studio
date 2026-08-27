@@ -18,6 +18,8 @@ import { gunzipSync } from 'fflate'
 import { collectionToText, indexFor, parse, parseSets } from '../src/lib/msigdb.ts'
 import { oraIndexed } from '../src/lib/ora.ts'
 import { MSIGDB_COLLECTIONS } from '../src/lib/methods.ts'
+// The real one, not a copy of its regex — see RUN_AS_SCRIPT in that file.
+import { readableName } from './fetch-genesets.mjs'
 
 const DIR = 'public/genesets'
 
@@ -172,6 +174,58 @@ console.log('\nTHE METHODS TEXT KNOWS EVERY COLLECTION')
   check('every offered collection is citable', [...offered].filter(s => !MSIGDB_COLLECTIONS.has(s)), [])
   check('and nothing is claimed that is not offered',
     [...MSIGDB_COLLECTIONS].filter(s => !offered.has(s)), [])
+}
+
+console.log('\nA PREFIX COMES OFF ONLY WHEN IT REPEATS THE COLLECTION')
+{
+  // HP_ came off human phenotype sets and MP_ stayed on the mouse ones, so a
+  // whole collection read "Mp abnormal tumor vascularization" beside a human
+  // counterpart reading "11 pairs of ribs". PID was missed the same way while
+  // every other canonical-pathway prefix came off.
+  check('the mouse phenotype prefix comes off',
+    readableName('MP_ABNORMAL_TUMOR_VASCULARIZATION'), 'Abnormal tumor vascularization')
+  check('as the human one already did',
+    readableName('HP_11_PAIRS_OF_RIBS'), '11 pairs of ribs')
+  check('and PID joins the other canonical pathways',
+    readableName('PID_A6B1_A6B4_INTEGRIN_PATHWAY'), 'A6b1 a6b4 integrin pathway')
+  check('beside Reactome', readableName('REACTOME_ABACAVIR_ADME'), 'Abacavir adme')
+
+  // What must NOT come off. Each of these leads 100% of its collection's ids
+  // and none is a prefix: two are the authors of the study the sets come from,
+  // which is the citation, and the third is the first word of the name.
+  check('an author is not a prefix',
+    readableName('GAVISH_3CA_MALIGNANT_METAPROGRAM_12_EMT_1'),
+    'Gavish 3ca malignant metaprogram 12 emt 1')
+  check('nor is the other one',
+    readableName('CUI_B_CELL_41BBL_RESPONSE_UP'), 'Cui b cell 41bbl response up')
+  check('nor is the first word of a sentence',
+    readableName('GENES_CORRELATED_WITH_ABL2_DELETION'), 'Genes correlated with abl2 deletion')
+  // METABOLIC_ leads every derived id and is deliberately absent: those sets
+  // are named by derive-metabolic.mjs as "Adipogenesis (Hallmark)" so each says
+  // which parent it came out of, and re-deriving them here would destroy that.
+  check('the derived prefix is left for its own script',
+    readableName('METABOLIC_HALLMARK_ADIPOGENESIS'), 'Metabolic hallmark adipogenesis')
+}
+
+console.log('\nWHAT THE SHIPPED ASSETS ACTUALLY SPELL')
+{
+  // The complaint this pins: "the mouse collections use human gene symbol
+  // style". They do not, and now the build says so rather than a person having
+  // to unpack a gzip to find out.
+  const bad = []
+  for (const [sp, spec] of Object.entries(manifest.species)) {
+    for (const src of spec.sources) {
+      const c = readCollection(src.file)
+      const syms = c.symbols.filter(g => /[A-Za-z]{2}/.test(g))
+      const upper = syms.filter(g => { const l = g.replace(/[^A-Za-z]/g, ''); return l && l === l.toUpperCase() }).length
+      const title = syms.filter(g => /^[A-Z][a-z]/.test(g)).length
+      const looks = upper > title ? 'human' : 'mouse'
+      if (looks !== sp) bad.push(`${src.file} looks ${looks} (${upper} upper vs ${title} title)`)
+      if (c.species !== sp) bad.push(`${src.file} header says species=${c.species}`)
+      if (c.source !== src.source) bad.push(`${src.file} header says source=${c.source}, manifest says ${src.source}`)
+    }
+  }
+  check('every collection is cased for the species it is filed under', bad, [])
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll gene set tests passed\n')
