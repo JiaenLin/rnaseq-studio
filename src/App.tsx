@@ -44,6 +44,8 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function App() {
   const [bundle, setBundle] = useState<Bundle | null>(null)
+  /** Bumped on every open, so per-bundle choices elsewhere know to reset. */
+  const [bundleSeq, setBundleSeq] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   /**
@@ -101,6 +103,7 @@ export default function App() {
 
   const adopt = useCallback((b: Bundle) => {
     setBundle(b)
+    setBundleSeq(n => n + 1)
     // The comparison is chosen from what the bundle can actually offer, not
     // from meta.contrasts[0] alone — a bundle that exported no contrast at all
     // still opens on a pair it could compute rather than on nothing.
@@ -243,10 +246,29 @@ export default function App() {
     const c = bundle?.counts
     return c ? c.geneIds.map((id, i) => c.geneNames[i] || id) : []
   }, [active, bundle])
+  /**
+   * The accessions, kept apart from the names.
+   *
+   * `libGenes` collapses them — `gene_name || gene_id` — which is right for a
+   * background and wrong for detecting the species, because it hides exactly
+   * the evidence that settles it. A bundle displayed by symbol still carries
+   * ENSMUSG in its id column, and that is not a hint about the organism, it is
+   * the organism.
+   */
+  const libIds = useMemo(() => {
+    const rows = active?.bundle.degByContrast[active.contrast.id]
+    if (rows?.length) return rows.map(r => r.gene_id)
+    return bundle?.counts.geneIds ?? []
+  }, [active, bundle])
   const embedded = useMemo(
     () => embeddedCollection(bundle?.genesets, bundle?.meta.project ?? ''),
     [bundle?.genesets, bundle?.meta.project])
-  const library = useLibrary(libGenes, bundle?.meta.species, embedded)
+  const library = useLibrary({
+    genes: libGenes, ids: libIds, metaSpecies: bundle?.meta.species, embedded,
+    // A counter, not a name: two bundles can share a project name, and opening
+    // the same file twice is still a new analysis.
+    bundleKey: String(bundleSeq),
+  })
 
   /** gene_id -> symbol, built once from whichever matrix carries the names. */
   const symbolOf = useMemo(() => {

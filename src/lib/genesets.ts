@@ -194,6 +194,17 @@ export function embeddedCollection(defs: GeneSetDef[] | undefined, project: stri
 export interface LibraryControl {
   lib: LibraryState
   species: Species
+  /** Which evidence chose it, and the sentence saying so. */
+  origin: 'you' | 'accession' | 'recorded' | 'names' | 'default'
+  why: string
+  /**
+   * True when the accessions say one species and meta.json says the other.
+   *
+   * Worth surfacing rather than resolving silently: one of the two is wrong
+   * about the bundle, and which one it is decides whether the reader should fix
+   * their metadata or their pipeline.
+   */
+  conflict: boolean
   onSpecies: (s: Species) => void
   sources: string[]
   onSources: (next: string[]) => void
@@ -221,12 +232,27 @@ export interface LibraryControl {
  * @param genes  the genes this contrast tested — the background, and the
  *               evidence species detection runs on
  */
-export function useLibrary(
-  genes: string[],
-  metaSpecies: string | undefined,
-  embedded: Collection[] = EMPTY,
-): LibraryControl {
-  const detected = useMemo(() => detectSpecies(genes), [genes])
+export function useLibrary({ genes, ids = EMPTY_SOURCES, metaSpecies, embedded = EMPTY, bundleKey = '' }: {
+  genes: string[]
+  /**
+   * The accession column, when the object is displayed by symbol.
+   *
+   * `detectSpecies` has always taken this and App has never passed it, which
+   * quietly reduced detection to the casing vote — its weakest signal. A mouse
+   * bundle of ENSMUSG accessions whose exporter upper-cased its symbols was
+   * read as human at 100% confidence, and if meta.json did not record a species
+   * the library opened on the wrong one. The evidence was in the bundle the
+   * whole time.
+   */
+  ids?: string[]
+  metaSpecies: string | undefined
+  embedded?: Collection[]
+  /**
+   * Changes when a different bundle is opened — see the reset below.
+   */
+  bundleKey?: string
+}): LibraryControl {
+  const detected = useMemo(() => detectSpecies(genes, ids), [genes, ids])
   const recorded = useMemo(() => speciesOfMeta(metaSpecies), [metaSpecies])
 
   /**
@@ -238,7 +264,22 @@ export function useLibrary(
    * the reader can override either.
    */
   const [pick, setPick] = useState<Species | null>(null)
-  const species = pick ?? recorded ?? detected.species
+
+  /**
+   * An ENSMUSG accession beats meta.json, and nothing else does.
+   *
+   * `recorded` used to win outright, on the reasoning that it is what the lab
+   * wrote down and better evidence than anything inferable from a gene list.
+   * That reasoning holds against the casing vote and not against an accession:
+   * ENSMUSG is not inferred from the identifier, it IS the identifier, while
+   * meta.species is free text somebody typed once. A bundle whose metadata says
+   * human and whose every gene is ENSMUSG is a bundle with a typo in one field,
+   * and opening the human library for it is the one case auto-detection exists
+   * to prevent.
+   */
+  const auto = detected.from === 'accession' ? detected.species : (recorded ?? detected.species)
+  const species = pick ?? auto
+  const conflict = detected.from === 'accession' && recorded != null && recorded !== detected.species
 
   /**
    * `null` until the defaults land — which is NOT the same as the empty array.
@@ -255,6 +296,30 @@ export function useLibrary(
    * exactly once.
    */
   const [chosen, setChosen] = useState<string[] | null>(null)
+
+  /**
+   * A new bundle re-asks the question. Every answer to the old one is retired.
+   *
+   * `pick` is an override made about ONE object and it used to outlive it: pick
+   * Mouse on an unlabelled bundle, open a bundle that records human, and the
+   * human bundle opened on the mouse library — with "this bundle records human"
+   * printed beside a select reading Mouse, the app disagreeing with itself on
+   * one line. `chosen` goes with it because a species change invalidates it
+   * anyway, and the collections are per analysis.
+   *
+   * `customSets` deliberately survives: a lab's own signatures are the lab's,
+   * not a property of whichever object happens to be open.
+   *
+   * Adjusted during render rather than in an effect, which is React's own
+   * remedy for exactly this — the alternative renders the wrong species once
+   * and then corrects it, and a species flash is a download.
+   */
+  const [seenKey, setSeenKey] = useState(bundleKey)
+  if (bundleKey !== seenKey) {
+    setSeenKey(bundleKey)
+    setPick(null)
+    setChosen(null)
+  }
   const sources = chosen ?? EMPTY_SOURCES
   const [customSets, onCustomSets] = useState<Collection[]>([])
 
@@ -280,8 +345,19 @@ export function useLibrary(
    */
   const onSpecies = (next: Species) => { setPick(next); setChosen(null) }
 
+  const origin: LibraryControl['origin'] = pick ? 'you'
+    : detected.from === 'accession' ? 'accession'
+      : recorded ? 'recorded'
+        : detected.from === 'symbols' ? 'names' : 'default'
+
+  const why = origin === 'you' ? 'you chose this library'
+    : origin === 'accession' ? detected.why
+      : origin === 'recorded' ? `this bundle records ${metaSpecies}`
+        : origin === 'names' ? `not recorded in the bundle; ${detected.why}`
+          : 'not recorded, and the gene names say nothing either way'
+
   return {
-    lib, species, onSpecies, sources, onSources: setChosen,
+    lib, species, origin, why, conflict, onSpecies, sources, onSources: setChosen,
     customSets, onCustomSets, detected, recorded,
   }
 }

@@ -396,11 +396,12 @@ export function LibraryPicker({ library, index, background, recorded }: {
   /** meta.species as the bundle spells it, for the sentence beside the select. */
   recorded?: string
 }) {
-  const { lib, species, onSpecies, sources, onSources, customSets, onCustomSets, detected } = library
+  const { lib, species, origin, why, conflict, onSpecies, sources, onSources,
+    customSets, onCustomSets, detected } = library
   const libExample = useMemo(() => exampleSymbol(lib.collections), [lib.collections])
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3 text-xs dark:border-slate-800">
+      <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-slate-100 pb-3 text-xs dark:border-slate-800">
         <span className="font-semibold uppercase tracking-wide text-slate-400">Species</span>
         <select
           className="rounded border border-slate-200 bg-transparent px-1.5 py-0.5 dark:border-slate-700"
@@ -410,10 +411,13 @@ export function LibraryPicker({ library, index, background, recorded }: {
           <option value="human">Human</option>
           <option value="mouse">Mouse</option>
         </select>
-        <span className="text-slate-400">
-          {library.recorded
-            ? `this bundle records ${recorded}`
-            : `not recorded in the bundle; the gene names look ${detected.species}`}
+        {/* Which evidence chose it. The select is pre-set from the bundle, so
+            the one thing it must never be is silent about why — a reader who
+            disagrees needs to know what the guess was based on before they
+            override it. */}
+        <span className={origin === 'default' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}>
+          {why}
+          {origin === 'accession' && !conflict && <> — so this was selected for you</>}
           {/* Said once, permanently, rather than only when something is wrong.
               "Are these human gene sets?" is a fair question to have about a
               library you cannot see, and one example symbol answers it at a
@@ -421,6 +425,16 @@ export function LibraryPicker({ library, index, background, recorded }: {
           {libExample && <> · these sets spell genes <b className="font-semibold">{libExample}</b>-style</>}
         </span>
       </div>
+      {conflict && (
+        <p className="-mt-1.5 mb-3 text-xs text-amber-600 dark:text-amber-400">
+          <b>This bundle disagrees with itself.</b> Its metadata records{' '}
+          {recorded ?? library.recorded} and its accessions are{' '}
+          {detected.species === 'mouse' ? 'ENSMUSG' : 'ENSG'}. The accessions decide it — they are
+          the identifier rather than a field somebody typed — so the{' '}
+          {lib.manifest?.species[species]?.label ?? species} library is loaded. Override above if
+          that is wrong, and fix <code className="font-mono">meta.species</code> in the bundle.
+        </p>
+      )}
       <GeneSetSources
         lib={lib} species={species} sources={sources} onSources={onSources}
         customSets={customSets} onCustomSets={onCustomSets}

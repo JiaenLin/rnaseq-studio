@@ -7,7 +7,7 @@
 
 import { bh, bhNlp, hyperTail, logHyperTail, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
 import { indexFor, parseSets } from '../src/lib/msigdb.ts'
-import { speciesOfMeta } from '../src/lib/species.ts'
+import { detectSpecies, speciesOfMeta } from '../src/lib/species.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -126,6 +126,43 @@ console.log('\nTHE OVERLAP COLUMN IS SPELLED THE LIBRARY\u2019S WAY')
   // The contract the components must honour.
   check('upper-casing it recovers the bundle\u2019s key',
     set.overlap.map(g => g.toUpperCase()), ['CYLD', 'IL10', 'IL2'])
+}
+
+console.log('\nTHE SPECIES A BUNDLE CAN BE READ FROM')
+{
+  // The evidence App was throwing away. `detectSpecies` takes the accession
+  // column as its second argument and has since it was written; App passed
+  // `gene_name || gene_id` — one collapsed list — so a bundle displayed by
+  // symbol hid its own accessions and detection fell back to the casing vote.
+  const ids = Array.from({ length: 40 }, (_, i) => `ENSMUSG${String(10000000 + i).padStart(11, '0')}`)
+  const upper = ['ABCA1', 'GFAP', 'MKI67', 'ACADL'].concat(
+    Array.from({ length: 36 }, (_, i) => `GENE${i}`))
+
+  const namesOnly = detectSpecies(upper)
+  check('upper-cased symbols alone read as human', [namesOnly.species, namesOnly.from],
+    ['human', 'symbols'])
+  const withIds = detectSpecies(upper, ids)
+  check('the same object with its accessions is mouse', [withIds.species, withIds.from],
+    ['mouse', 'accession'])
+  check('and says what settled it', withIds.why, 'ENSMUSG accessions in this object')
+  check('confidently', withIds.support, 1)
+
+  // Human accessions carry no species letters — ENSG, not ENSHSAG — so the
+  // table is a prefix list and the mouse pattern has to be tried first.
+  const hs = detectSpecies(upper, ids.map(i => i.replace('ENSMUSG', 'ENSG')))
+  check('human accessions are read too', [hs.species, hs.from], ['human', 'accession'])
+
+  // Too few accessions to vote on falls back rather than deciding on three.
+  check('a handful of accessions is not evidence',
+    detectSpecies(upper, ids.slice(0, 4)).from, 'symbols')
+
+  // Identifiers with no casing to read — a bundle keyed by number, or by an
+  // accession this app does not know — are not a vote for human by default.
+  // (7SK is deliberately NOT in this list: it has two capitals and it IS an
+  // upper-case symbol, so counting it as evidence is right.)
+  const mute = detectSpecies(['1E5', '12345', 'A1', '9'])
+  check('nothing to read is not a vote', mute.from, 'default')
+  check('and it says so', mute.support, 0)
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll ORA tests passed\n')
