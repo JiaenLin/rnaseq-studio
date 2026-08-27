@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from '../types'
 import { combinedScore } from '../lib/stats'
-import { oraColorDomain, oraColorTicks, oraIndexed, type ORAResult } from '../lib/ora'
+import { oraColorDomain, oraColorScale, oraIndexed, type ORAResult } from '../lib/ora'
 import { useSetIndex, type LibraryControl } from '../lib/genesets.ts'
 import type { OverlapQuery, QueryRow } from '../lib/venn'
 import { LibraryPicker } from './GeneSetSources.tsx'
@@ -628,18 +628,10 @@ function barTrace(bars: ORAResult[], metric: BarMetric, nQuery: number) {
     textposition: 'none',
     marker: {
       color: sig, cmin: lo, cmax: hi,
-      // Plotly's own "YlOrRd" runs dark red at 0 to pale yellow at 1 — the
-      // reverse of ColorBrewer's, and the reverse of what anybody reading an
-      // enrichment figure expects. Unreversed, the most significant term in the
-      // table came out the palest thing on the page.
-      colorscale: 'YlOrRd', reversescale: true, showscale: true,
-      colorbar: {
-        title: 'p.adjust', thickness: 12, len: 0.6,
-        // Ticked at the p-values people quote rather than at −log10 steps, so
-        // the ramp reads the same way on every figure and the 0.05 line is
-        // always findable on it.
-        ...oraColorTicks(hi), tickfont: { size: 10 },
-      },
+      // Stops at the terms' own values rather than a linear ramp — see
+      // oraColorScale. Written out, so `reversescale` is gone with it.
+      colorscale: oraColorScale(sig), showscale: true,
+      colorbar: { title: '−log10<br>p.adjust', thickness: 12, len: 0.6 },
       line: { color: '#64748b', width: 0.5 },
     },
   }

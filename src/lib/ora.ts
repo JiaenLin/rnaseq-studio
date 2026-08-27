@@ -284,61 +284,76 @@ export function oraIndexed(
 export const ORA_CUT = -Math.log10(0.05)
 
 /**
- * Ceilings the ramp is allowed to take.
+ * ColorBrewer YlOrRd, pale to dark.
  *
- * A LADDER rather than the data's own maximum, and that is the whole point. A
- * fitted ceiling means the top bar is the reddest thing on every figure whatever
- * its p-value, and a fitted floor means the palest is the palest whatever its
- * p-value — so a shade meant one thing in one figure and another in the next,
- * and two enrichment figures from the same study could not be read against each
- * other. On a rung, colour and value are the same relationship in every figure.
- *
- * The FIRST rung is 5 — padj 1e−5 — and not something tighter, because a
- * quantised ceiling can inverse the ordering across a rung and the first rung is
- * where that would bite. With rungs starting at 2, a page whose best term is
- * padj 0.01 fills the ramp and comes out dark red, while a page whose best is
- * 1e−3 lands on the next rung at 60% and comes out ORANGE: ten times the
- * evidence, drawn paler. At 5 every ordinary enrichment run — anything not
- * reaching 1e−5 — shares one scale, so the ordering holds and the figures are
- * identical rather than merely comparable.
- *
- * 300 is the last rung because −log10 of the smallest double is about 308; a
- * value past it is at the underflow limit and clamping it costs nothing.
+ * Written out rather than named, because the stops below have to be placed by
+ * hand and Plotly will only interpolate a named scale linearly. These are the
+ * same nine colours 'YlOrRd' with `reversescale` was already producing.
  */
-const CEILINGS = [5, 10, 25, 50, 100, 300]
+const YLORRD = [
+  '#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c',
+  '#fc4e2a', '#e31a1c', '#bd0026', '#800026',
+]
 
-/**
- * The colour scale, anchored rather than fitted.
- *
- * The floor is 0 — padj = 1, no evidence at all — always. It used to be the
- * smallest value present, which made the palest colour mean "the least
- * significant term HERE": padj 0.9 on one page and padj 1e-4 on another, both
- * drawn in the same yellow.
- *
- * "A page where nothing is significant must not look significant" survives, and
- * is now a consequence rather than a special case: the lowest rung is 5 and the
- * 0.05 line sits at 1.3, so a page whose best term is not significant sits in
- * the bottom quarter of the ramp and cannot look like anything else.
- */
-export function oraColorDomain(nlps: readonly number[]): { lo: number; hi: number } {
-  let hi = 0
-  for (const v of nlps) if (Number.isFinite(v) && v > hi) hi = v
-  return { lo: 0, hi: CEILINGS.find(c => c >= hi) ?? CEILINGS[CEILINGS.length - 1] }
+const rampAt = (t: number): string => {
+  const x = Math.max(0, Math.min(1, t)) * (YLORRD.length - 1)
+  const i = Math.min(YLORRD.length - 2, Math.floor(x))
+  const f = x - i
+  const [a, b] = [YLORRD[i], YLORRD[i + 1]]
+  const mix = (k: number) => Math.round(
+    parseInt(a.slice(1 + k * 2, 3 + k * 2), 16) * (1 - f)
+    + parseInt(b.slice(1 + k * 2, 3 + k * 2), 16) * f)
+  return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`
 }
 
 /**
- * Colour-bar ticks in the units a reader thinks in.
+ * Colour stops placed at the drawn terms' OWN values, not spread evenly.
  *
- * The bar was labelled "−log10 p.adjust" and ticked 0.8, 0.9, 1.0 … which is a
- * quantity nobody quotes and, on a fitted scale, a different quantity per
- * figure. Landmarks at the p-values people actually name, so the ramp explains
- * itself whatever rung it is on and 0.05 is always findable on it.
+ * A linear ramp between the weakest and strongest term on the figure is what
+ * this had, and it is right until the p-values are skewed — which on a real
+ * enrichment run they always are. Measured on one: fifteen terms from padj
+ * 6e−19 to 1e−115, of which THIRTEEN landed in the bottom 18% of the ramp and
+ * came out the same yellow while two outliers owned the rest of it. The figure
+ * had a colour axis and used three colours.
+ *
+ * Equalising fixes it without giving up the meaning. The i-th weakest term gets
+ * the i-th colour of the ramp — so every bar is distinguishable and the whole
+ * scale is used — while its stop sits at its own value, so colour is still
+ * monotonic in p and the colour bar it renders is still a true axis, just a
+ * non-linear one. Both properties at once: lowest value palest, highest darkest,
+ * and no two bars the same by accident.
  */
-export function oraColorTicks(hi: number): { tickvals: number[]; ticktext: string[] } {
-  const marks: [number, string][] = [
-    [0, '1'], [ORA_CUT, '0.05'], [2, '0.01'], [3, '1e−3'], [5, '1e−5'],
-    [10, '1e−10'], [25, '1e−25'], [50, '1e−50'], [100, '1e−100'], [300, '1e−300'],
-  ]
-  const keep = marks.filter(([v]) => v <= hi)
-  return { tickvals: keep.map(m => m[0]), ticktext: keep.map(m => m[1]) }
+export function oraColorScale(nlps: readonly number[]): [number, string][] {
+  const v = nlps.filter(Number.isFinite).sort((a, b) => a - b)
+  const { lo, hi } = oraColorDomain(nlps)
+  const span = hi - lo
+  // One term, or all of them identical: nothing to spread, and a zero-width
+  // span would put every stop at the same place.
+  if (v.length < 2 || span <= 0) return [[0, YLORRD[YLORRD.length - 1]], [1, YLORRD[YLORRD.length - 1]]]
+
+  const stops: [number, string][] = []
+  for (let i = 0; i < v.length; i++) {
+    const at = Math.max(0, Math.min(1, (v[i] - lo) / span))
+    const colour = rampAt(i / (v.length - 1))
+    // Plotly needs non-decreasing positions and gains nothing from repeats:
+    // two terms with the same p-value are one stop, and it takes the darker.
+    if (stops.length && stops[stops.length - 1][0] >= at) stops[stops.length - 1][1] = colour
+    else stops.push([at, colour])
+  }
+  if (stops[0][0] > 0) stops.unshift([0, stops[0][1]])
+  if (stops[stops.length - 1][0] < 1) stops.push([1, stops[stops.length - 1][1]])
+  return stops
+}
+
+export function oraColorDomain(nlps: readonly number[]): { lo: number; hi: number } {
+  if (!nlps.length) return { lo: 0, hi: ORA_CUT * 1.2 }
+  let lo = Infinity
+  let hi = -Infinity
+  for (const v of nlps) {
+    if (!Number.isFinite(v)) continue
+    if (v < lo) lo = v
+    if (v > hi) hi = v
+  }
+  if (!Number.isFinite(lo)) return { lo: 0, hi: ORA_CUT * 1.2 }
+  return { lo, hi: Math.max(ORA_CUT * 1.2, hi) }
 }

@@ -5,7 +5,7 @@
 // space, and there is a second, indexed implementation of the same test that
 // has to agree with the reference exactly.
 
-import { ORA_CUT, bh, bhNlp, hyperTail, logHyperTail, oraColorDomain, oraColorTicks, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
+import { ORA_CUT, bh, bhNlp, hyperTail, logHyperTail, oraColorDomain, oraColorScale, oraIndexed, runORA, prepareSets } from '../src/lib/ora.ts'
 import { indexFor, parseSets } from '../src/lib/msigdb.ts'
 import { tickLabels, tickRows, wrapLabel } from '../src/lib/labels.ts'
 import { detectSpecies, speciesOfMeta } from '../src/lib/species.ts'
@@ -200,48 +200,52 @@ console.log('\nA BAR CHART\u2019S TICK LABELS')
     new Set(tickLabels(['Cell cycle', 'Cell cycle'])).size, 2)
 }
 
-console.log('\nONE COLOUR MEANS ONE P-VALUE, ON EVERY FIGURE')
+console.log('\nEVERY BAR ON THE FIGURE GETS ITS OWN COLOUR')
 {
-  // The floor was the smallest value PRESENT, so the palest colour meant "the
-  // least significant term here" — padj 0.9 on one page and padj 1e-4 on the
-  // next, both drawn in the same yellow, and no two figures readable against
-  // each other.
-  check('the floor is no evidence at all, always', oraColorDomain([0.8, 0.9, 1.5]).lo, 0)
-  check('however strong the page is', oraColorDomain([40, 41, 42]).lo, 0)
-  check('and an empty page still has a domain', oraColorDomain([]), { lo: 0, hi: 5 })
+  // The measurement that prompted this. Fifteen real terms, padj 6e-19 down to
+  // 1e-115: on a linear ramp between the weakest and the strongest, THIRTEEN of
+  // them landed in the bottom fifth and came out the same yellow. A colour axis
+  // rendering three colours.
+  const skewed = [18.20, 18.29, 19.21, 19.37, 19.70, 19.93, 20.34, 20.49,
+    23.40, 25.15, 25.33, 29.00, 35.82, 80.50, 114.89]
+  const { lo, hi } = oraColorDomain(skewed)
+  check('the domain still spans exactly the drawn terms', [lo, hi], [18.20, 114.89])
+  const linear = skewed.filter(v => (v - lo) / (hi - lo) < 0.2).length
+  check('and a linear ramp would still crush them', linear, 13)
 
-  // The ceiling is a ladder, so two figures whose strongest terms land on the
-  // same rung are not merely comparable but identical.
-  check('a weak page and a slightly less weak one share a scale',
-    oraColorDomain([0.4, 1.1]).hi, oraColorDomain([1.9, 0.2]).hi)
-  check('rungs', [1.9, 5, 5.1, 9, 26, 400].map(v => oraColorDomain([v]).hi),
-    [5, 5, 10, 10, 50, 300])
-  // The reason the first rung is 5. On rungs starting at 2 these two inverted:
-  // padj 0.01 filled its ramp and came out darker than padj 1e−3 on the next.
-  const a = oraColorDomain([2]), bb = oraColorDomain([3])
-  check('more evidence is never drawn paler', 2 / a.hi < 3 / bb.hi, true)
-  check('because ordinary pages share one scale', a.hi, bb.hi)
-  // −log10 of the smallest double is about 308: past the last rung is the
-  // underflow limit, and clamping there costs nothing.
-  check('nothing runs off the end', oraColorDomain([1e9]).hi, 300)
-  check('a non-finite value is not a ceiling', oraColorDomain([Infinity, 3]).hi, 5)
+  const stops = oraColorScale(skewed)
+  check('one stop per distinct value', stops.length, skewed.length)
+  check('the palest is the largest p-value', stops[0][1], 'rgb(255, 255, 204)')
+  check('the darkest is the smallest', stops[stops.length - 1][1], 'rgb(128, 0, 38)')
+  check('every colour differs from its neighbour',
+    new Set(stops.map(s => s[1])).size, stops.length)
 
-  // The property the old fitted scale had to special-case, now a consequence:
-  // the lowest rung is 2 and the 0.05 line is at 1.3, so a page whose best term
-  // is not significant cannot reach the top of the ramp.
-  const weak = oraColorDomain([0.3, 0.9, 1.2])
-  check('nothing significant cannot look significant', 1.2 / weak.hi < 0.3, true)
+  // The stops are an AXIS, so they have to be a valid one: inside [0,1] and
+  // never going backwards, or Plotly renders nothing at all.
+  check('positions are inside the bar', stops.every(([p]) => p >= 0 && p <= 1), true)
+  check('and never go backwards',
+    stops.every(([p], i) => i === 0 || p > stops[i - 1][0]), true)
+  check('it starts at the bottom and ends at the top',
+    [stops[0][0], stops[stops.length - 1][0]], [0, 1])
 
-  // The bar is ticked in the units people quote, not in −log10 steps.
-  const t = oraColorTicks(oraColorDomain([1.2]).hi)
-  check('a weak page still shows where 0.05 is', t.ticktext, ['1', '0.05', '0.01', '1e−3', '1e−5'])
-  check('at the right place', t.tickvals[1], ORA_CUT)
-  // A best term at 1e−30 lands on the 50 rung, so the bar is labelled up to it.
-  check('a strong page reaches further',
-    oraColorTicks(oraColorDomain([30]).hi).ticktext,
-    ['1', '0.05', '0.01', '1e−3', '1e−5', '1e−10', '1e−25', '1e−50'])
-  check('and never past its own ceiling',
-    oraColorTicks(5).tickvals.every(v => v <= 5), true)
+  // Colour is still monotonic in the value — the stop for a stronger term sits
+  // higher up the bar than the stop for a weaker one. That is what keeps the
+  // colour bar a true axis rather than a rank key.
+  const at = v => stops.find(([p]) => Math.abs(p - (v - lo) / (hi - lo)) < 1e-9)
+  check('a stronger term sits higher on the bar',
+    at(80.50)[0] > at(29.00)[0], true)
+
+  // Degenerate inputs must not produce an invalid scale.
+  check('one term is a scale of one colour', oraColorScale([5]).length, 2)
+  check('and all-equal terms too', oraColorScale([3, 3, 3]).map(s => s[0]), [0, 1])
+  check('nothing at all still gives Plotly something', oraColorScale([]).length, 2)
+  // Two terms sharing a p-value are one stop; the darker wins, so the ramp
+  // still ends where it should.
+  const dup = oraColorScale([2, 2, 9])
+  check('a repeated value collapses to one stop',
+    dup.every(([p], i) => i === 0 || p > dup[i - 1][0]), true)
+  check('and the ramp still reaches the dark end',
+    dup[dup.length - 1][1], 'rgb(128, 0, 38)')
 }
 
 console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll ORA tests passed\n')
