@@ -21,6 +21,12 @@ sets. Everything runs client-side — **your data never leaves your device** (no
 - **Volcano** — interactive, with tunable −log10(padj) and |log2FC| cutoffs; click a point to
   jump to that gene.
 - **DEG table** — sortable/filterable, with a combined score (−log10 p × log2FC) and CSV export.
+- **Only Ensembl IDs?** A bundle keyed by accessions is converted to gene symbols on open —
+  species auto-detected from the accessions themselves (ENSG / ENSMUSG), human and mouse. It is
+  not cosmetic: MSigDB is written in symbols, so before the conversion an accession-keyed bundle
+  had an annotated background of **zero** and enrichment returned an empty page rather than an
+  error. Nothing is merged where two accessions share a symbol, every table keeps the accession
+  beside the symbol, and the banner says how many mapped.
 - **Overlap (Venn)** — intersect the DEG lists of two or more comparisons: a proportional Venn
   for up to four, an UpSet matrix beyond that, up to six in all. Every wedge is *exclusive* and
   clickable — the genes in exactly those comparisons and no others — with each gene's log2FC and
@@ -108,6 +114,16 @@ node scripts/gen-sample.mjs   # regenerate the demo bundle in public/sample/
 npm test                      # bundle parsing, the ORA and GSEA maths, the gene-set library, the Venn geometry
 npm run dev                   # http://localhost:5173
 npm run build && npm run preview
+```
+
+### Gene symbols
+
+`public/symbols/` holds Ensembl gene id → symbol for human and mouse (~0.8 MB gzipped, fetched
+only when a bundle needs it), built from Ensembl BioMart and committed for the same reason the
+gene sets are — CI and the deploy need no network. Rebuild after an Ensembl release:
+
+```bash
+node scripts/fetch-symbols.mjs
 ```
 
 ### The gene-set library

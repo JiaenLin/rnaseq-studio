@@ -10,6 +10,8 @@ import ComparisonBar from './components/ComparisonBar'
 import { loadBundleFromUrl, loadBundleFromFiles, loadBundleFromZip } from './lib/bundle'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import { embeddedCollection, useLibrary } from './lib/genesets'
+import type { Conversion } from './lib/symbols'
+import { applySymbols, loadSymbols, symbolNeed } from './lib/symbols'
 import Overview from './components/Overview'
 import GeneExpression from './components/GeneExpression'
 import GeneSetExplorer from './components/GeneSetExplorer'
@@ -46,6 +48,15 @@ export default function App() {
   const [bundle, setBundle] = useState<Bundle | null>(null)
   /** Bumped on every open, so per-bundle choices elsewhere know to reset. */
   const [bundleSeq, setBundleSeq] = useState(0)
+  /**
+   * What the accession -> symbol conversion did, when one was needed.
+   *
+   * Reported rather than silent. Renaming every gene in somebody's data is a
+   * large thing to do to it, and the counts — how many mapped, how many Ensembl
+   * has no name for, how many symbols name more than one row — are the numbers
+   * that say whether to trust the tables that follow.
+   */
+  const [symbols, setSymbols] = useState<Conversion | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   /**
@@ -101,9 +112,38 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null)
   const zipRef = useRef<HTMLInputElement>(null)
 
+  /**
+   * A bundle keyed by accession is converted to symbols before anything reads
+   * it, so no view has to know the conversion happened.
+   *
+   * Async, and the bundle is shown FIRST rather than held back behind a
+   * download: the tables are readable either way, and blocking the whole app on
+   * a 0.4 MB fetch to make them prettier is the wrong trade. The conversion
+   * lands a moment later and every figure follows it.
+   */
+  const convert = useCallback(async (b: Bundle) => {
+    const need = symbolNeed(b)
+    if (!need.needed) return
+    try {
+      const map = await loadSymbols(need.species)
+      const { bundle: next, report } = applySymbols(b, map)
+      // Only if this is still the bundle on screen — a reader who opened
+      // another one while the map was downloading must not have its genes
+      // renamed by the previous one's.
+      setBundle(cur => (cur === b ? next : cur))
+      setSymbols(report)
+    } catch {
+      // A failed lookup leaves the accessions in place, which is exactly what
+      // the app did before this existed. Nothing to recover from.
+      setSymbols(null)
+    }
+  }, [])
+
   const adopt = useCallback((b: Bundle) => {
     setBundle(b)
     setBundleSeq(n => n + 1)
+    setSymbols(null)
+    void convert(b)
     // The comparison is chosen from what the bundle can actually offer, not
     // from meta.contrasts[0] alone — a bundle that exported no contrast at all
     // still opens on a pair it could compute rather than on nothing.
@@ -117,7 +157,7 @@ export default function App() {
     setGeneText('')
     setTab('overview')
     setError(null)
-  }, [])
+  }, [convert])
 
   /**
    * Choosing a comparison is one assignment.
@@ -388,6 +428,19 @@ export default function App() {
           bundle={bundle} sel={sel} state={state}
           running={myRun.running} runLog={myRun.log}
           onSel={pickSel} onRun={runPair} />
+      )}
+
+      {symbols && (
+        <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <b>Gene symbols added.</b> This bundle is keyed by Ensembl accessions, which
+          MSigDB cannot match — {symbols.mapped.toLocaleString()} of{' '}
+          {symbols.total.toLocaleString()} now carry a symbol ({symbols.release}).
+          {symbols.unmapped > 0 && <> {symbols.unmapped.toLocaleString()} have no symbol in Ensembl
+            and keep their accession.</>}
+          {symbols.duplicated > 0 && <> {symbols.duplicated.toLocaleString()} rows share a symbol
+            with another row; nothing was merged, and every table shows the accession beside
+            the symbol.</>}
+        </p>
       )}
 
       {/* What is wrong with the bundle, once, where it is read — not as an

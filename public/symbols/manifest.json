@@ -1,0 +1,18 @@
+{
+  "generated": "2026-08-28",
+  "release": "Ensembl 116",
+  "species": {
+    "human": {
+      "label": "Human",
+      "file": "human.sym",
+      "nGenes": 49131,
+      "bytes": 318012
+    },
+    "mouse": {
+      "label": "Mouse",
+      "file": "mouse.sym",
+      "nGenes": 77797,
+      "bytes": 443890
+    }
+  }
+}
