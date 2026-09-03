@@ -53,52 +53,111 @@ async function ensureDESeq2(webR: any, log: (m: string) => void) {
 }
 
 /**
- * THE FILTER, which is where the time went.
+ * ONE FIT, THEN PER-CONTRAST EXTRACTION — the same architecture as rnaseq-lab.
  *
- * Measured in webR on 20 000 genes x 16 samples — a pooled two-groups-a-side
- * comparison — the fit is essentially the whole cost and the plumbing is
- * nothing:
+ * `~ 0 + cond` is a cell-means model over EVERY sample the reader has left in:
+ * one coefficient per group, so any comparison — one group against another, or
+ * pooled sides — is a linear combination of those group means, extracted from
+ * the single fit by `results(dds, contrast = ...)`.
  *
- *   read.csv 0.1 s · building the dds 0.4 s · DESeq() 32.6 s · results() 0.3 s
+ * This used to refit for every comparison, on only the two sides' samples. Two
+ * things were wrong with that. The whole cost is the fit — measured in webR on
+ * 20 000 genes x 16 samples: read.csv 0.1 s, building the dds 0.4 s, DESeq()
+ * 32.6 s, results() 0.3 s — so picking a second pair paid all of it again. And
+ * each pair got its own dispersion, so the same comparison could return a
+ * different p-value depending on which pair was asked for beside it, and none
+ * of them matched what rnaseq-lab had put in the bundle. Fit once, cache it,
+ * extract.
  *
- * So the only thing worth changing is how many genes reach `DESeq()`. This
- * filtered on `rowSums(counts) > 0` — drop the genes that are zero in every
- * sample — which on a real annotation removes almost nothing and fits a
- * negative-binomial model for every unexpressed gene in it. The rule here is
- * the standard edgeR/limma one and is the same rule rnaseq-lab already applies,
- * so the two apps agree about which genes were tested: 20 000 genes down to
- * 14 478, and 26.4 s down to 18.6 s.
+ * The fit is cached in the R session under a key covering the matrix and which
+ * samples are in it — the two things that change it. Group choice does not.
  *
- * IT MOVES padj, which is worth saying plainly rather than burying. Fewer genes
- * enter the Benjamini-Hochberg correction, so adjusted p-values fall slightly.
- * The genes it removes are ones `results()` would have given padj = NA anyway
- * under its own independent filtering — but "would have" is not "did", and the
- * Methods paragraph states the filter for a run performed here.
+ * THE GENE FILTER moves padj, which is worth saying plainly rather than
+ * burying: fewer genes enter the Benjamini-Hochberg correction, so adjusted
+ * p-values fall slightly. It is the standard edgeR/limma rule and the same one
+ * rnaseq-lab applies, so the two apps agree about which genes were tested.
  *
  * Default parametric dispersion fitting never calls locfit; the rare fallback
  * path does, and locfit is a stub in this build, so retry with the "mean" fit.
  */
-const DESEQ_R = `local({
+const FIT_R = `local({
   suppressMessages(library(DESeq2))
-  REF <- __REF__
-  counts <- round(as.matrix(read.csv("/work/counts.csv", row.names = 1, check.names = FALSE)))
-  storage.mode(counts) <- "integer"
-  cd <- read.csv("/work/coldata.csv", stringsAsFactors = FALSE, check.names = FALSE)
-  rownames(cd) <- cd$sample
-  counts <- counts[, cd$sample, drop = FALSE]
-  keep <- rowSums(counts >= 10) >= max(2, min(table(cd$condition)))
-  counts <- counts[keep, , drop = FALSE]
-  cd$condition <- relevel(factor(cd$condition), ref = REF)
-  dds <- DESeqDataSetFromMatrix(counts, cd, ~condition)
-  dds <- tryCatch(DESeq(dds, quiet = TRUE),
-                  error = function(e) suppressWarnings(DESeq(dds, fitType = "mean", quiet = TRUE)))
-  res <- as.data.frame(results(dds))
+  KEY <- __KEY__
+  if (!exists(".studio_key", envir = globalenv()) ||
+      !identical(get(".studio_key", envir = globalenv()), KEY)) {
+    counts <- round(as.matrix(read.csv("/work/counts.csv", row.names = 1, check.names = FALSE)))
+    storage.mode(counts) <- "integer"
+    cd <- read.csv("/work/coldata.csv", stringsAsFactors = FALSE, check.names = FALSE)
+    rownames(cd) <- cd$sample
+    counts <- counts[, cd$sample, drop = FALSE]
+    # Same rule rnaseq-lab applies, so the two apps agree about which genes
+    # were tested.
+    keep <- rowSums(counts >= 10) >= max(2, min(table(cd$cond)))
+    counts <- counts[keep, , drop = FALSE]
+    cd$cond <- factor(cd$cond, levels = unique(cd$cond))
+    dds <- DESeqDataSetFromMatrix(counts, cd, ~ 0 + cond)
+    dds <- tryCatch(DESeq(dds, quiet = TRUE),
+                    error = function(e) suppressWarnings(DESeq(dds, fitType = "mean", quiet = TRUE)))
+    assign(".studio_dds", dds, envir = globalenv())
+    assign(".studio_key", KEY, envir = globalenv())
+    sprintf("fitted|%d|%d|%d", ncol(dds), nlevels(cd$cond), nrow(dds))
+  } else {
+    dds <- get(".studio_dds", envir = globalenv())
+    sprintf("cached|%d|%d|%d", ncol(dds),
+            nlevels(colData(dds)$cond), nrow(dds))
+  }
+})`
+
+/**
+ * Extract one comparison from the cached fit.
+ *
+ * A side naming several groups is the average of their group means, weighted by
+ * how many samples each contributes — the cell-means way to write "these groups
+ * pooled". For the ordinary one-group-per-side case the weights are 1 and -1 and
+ * this is exactly the pairwise contrast.
+ */
+const EXTRACT_R = `local({
+  suppressMessages(library(DESeq2))
+  dds <- get(".studio_dds", envir = globalenv())
+  w <- read.csv("/work/contrast.csv", stringsAsFactors = FALSE, check.names = FALSE)
+  rn <- resultsNames(dds)
+  cv <- setNames(rep(0, length(rn)), rn)
+  nm <- paste0("cond", w$level)
+  if (!all(nm %in% rn)) stop("a contrast names a group that is not in the fit")
+  for (i in seq_len(nrow(w))) cv[nm[i]] <- cv[nm[i]] + w$weight[i]
+  res <- as.data.frame(results(dds, contrast = cv))
   write.csv(data.frame(gene_id = rownames(res), gene_name = rownames(res),
             baseMean = round(res$baseMean, 3), log2FoldChange = round(res$log2FoldChange, 5),
             lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj),
             "/work/deg.csv", row.names = FALSE)
   sprintf("%d", sum(res$padj < 0.05, na.rm = TRUE))
 })`
+
+/**
+ * The contrast vector for one comparison, over GROUP MEANS.
+ *
+ * A side naming several groups is the average of their group means, weighted by
+ * how many samples each contributes — the cell-means way to write "these groups
+ * pooled". One group a side gives +1 / -1, the plain pairwise contrast.
+ *
+ * Weights on each side sum to +1 and -1, so the whole vector sums to zero: the
+ * contrast is a difference of means and carries no intercept. Weighting by
+ * sample count rather than 1/k keeps a pooled side reading as the average of
+ * its SAMPLES, which is what refitting the two sides as one level used to give.
+ */
+export function contrastWeights(
+  numerator: readonly string[],
+  denominator: readonly string[],
+  sizeOf: ReadonlyMap<string, number>,
+): { level: string; weight: number }[] {
+  const n = (gs: readonly string[]) => gs.reduce((a, g) => a + (sizeOf.get(g) ?? 0), 0)
+  const nNum = n(numerator), nDen = n(denominator)
+  if (!nNum || !nDen) throw new Error('a side of the contrast has no samples')
+  return [
+    ...numerator.map(g => ({ level: g, weight: (sizeOf.get(g) ?? 0) / nNum })),
+    ...denominator.map(g => ({ level: g, weight: -(sizeOf.get(g) ?? 0) / nDen })),
+  ]
+}
 
 export interface DeseqRequest {
   raw: CountsMatrix
@@ -145,23 +204,18 @@ export async function runDESeq2(
 ): Promise<DEGRow[]> {
   const cond: Record<string, string> = {}
   for (const s of samples) cond[s.sample] = s.condition
-  // Not `num` — that is the module-level number parser below, and shadowing it
-  // inside the one function that also calls parseDegCsv is a trap for later.
-  const numSet = new Set(numerator)
-  const denSet = new Set(denominator)
   const out = new Set(excluded)
 
-  // The pooled level, not the group name: R sees two conditions whatever the
-  // reader selected, so the model formula and the results() call never have to
-  // know how many groups went into each side.
+  // EVERY sample the reader has left in goes to R, with its own group. The fit
+  // spans all of them; the comparison is a contrast pulled out of it afterwards.
   const cols = raw.samples
     .map((s, j) => ({ s, j, c: cond[s] ?? '' }))
-    .filter(x => !out.has(x.s))
-    .map(x => ({ ...x, side: numSet.has(x.c) ? 'TEST' : denSet.has(x.c) ? 'CTRL' : '' }))
-    .filter(x => x.side)
+    .filter(x => !out.has(x.s) && x.c)
 
-  const nNum = cols.filter(x => x.side === 'TEST').length
-  const nDen = cols.filter(x => x.side === 'CTRL').length
+  const sizeOf = new Map<string, number>()
+  for (const c of cols) sizeOf.set(c.c, (sizeOf.get(c.c) ?? 0) + 1)
+  const nNum = numerator.reduce((a, g) => a + (sizeOf.get(g) ?? 0), 0)
+  const nDen = denominator.reduce((a, g) => a + (sizeOf.get(g) ?? 0), 0)
   const nameNum = numerator.join(' + ') || '(nothing)'
   const nameDen = denominator.join(' + ') || '(nothing)'
   if (nNum < 2 || nDen < 2)
@@ -170,7 +224,12 @@ export async function runDESeq2(
   const webR = await getWebR(log)
   await ensureDESeq2(webR, log)
 
-  // Raw counts for just these samples, as CSV for R.
+  // Group labels are recoded to g1..gN before they reach R: real labels carry
+  // "+", "-" and spaces, which make.names() mangles into something that no
+  // longer matches the contrast we asked for.
+  const levels = [...new Set(cols.map(c => c.c))]
+  const gid = (g: string) => `g${levels.indexOf(g) + 1}`
+
   const S = raw.samples.length
   const header = ['gene_id', ...cols.map(c => JSON.stringify(c.s))].join(',')
   const lines = new Array<string>(raw.geneIds.length + 1)
@@ -182,16 +241,27 @@ export async function runDESeq2(
     for (let k = 0; k < cols.length; k++) cells[k + 1] = String(Math.round(raw.values[base + cols[k].j]))
     lines[i + 1] = cells.join(',')
   }
-  const coldata = 'sample,condition\n' +
-    cols.map(c => `${JSON.stringify(c.s)},${JSON.stringify(c.side)}`).join('\n') + '\n'
+  const coldata = 'sample,cond\n' +
+    cols.map(c => `${JSON.stringify(c.s)},${JSON.stringify(gid(c.c))}`).join('\n') + '\n'
+
+  const wRows = contrastWeights(numerator, denominator, sizeOf)
+    .map(w => `${JSON.stringify(gid(w.level))},${w.weight}`)
 
   try { await webR.FS.mkdir('/work') } catch { /* exists */ }
   const enc = new TextEncoder()
+  const key = JSON.stringify([raw.geneIds.length, cols.map(c => c.s), cols.map(c => c.c)])
   await webR.FS.writeFile('/work/counts.csv', enc.encode(lines.join('\n') + '\n'))
   await webR.FS.writeFile('/work/coldata.csv', enc.encode(coldata))
+  await webR.FS.writeFile('/work/contrast.csv', enc.encode('level,weight\n' + wRows.join('\n') + '\n'))
 
-  log(`Running DESeq2 — ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
-  const nDeg = await webR.evalRString(DESEQ_R.replace('__REF__', JSON.stringify('CTRL')))
+  const fit: string = await webR.evalRString(FIT_R.replace('__KEY__', JSON.stringify(key)))
+  const [state, nS, nG, nGenes] = fit.split('|')
+  log(state === 'cached'
+    ? `Reusing the fit — ${nS} samples, ${nG} groups, ${nGenes} genes.`
+    : `One fit over ${nS} samples in ${nG} groups, ${nGenes} genes.`)
+
+  log(`Extracting ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
+  const nDeg = await webR.evalRString(EXTRACT_R)
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
   log(`Done — ${nDeg} genes at padj < 0.05.`)
   return withSymbols(parseDegCsv(csv), geneNames ?? namesOf(raw))

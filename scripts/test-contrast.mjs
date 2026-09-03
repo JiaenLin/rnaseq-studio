@@ -7,6 +7,7 @@
 
 import { auditBundle, comparisonKey, comparisonState, conditionSizes, matchPrecomputed, relevantExclusions }
   from '../src/lib/contrast.ts'
+import { contrastWeights } from '../src/lib/deseq.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -277,5 +278,49 @@ console.log('\nA CLEAN BUNDLE IS SILENT')
   check('nothing to report', auditBundle(b), [])
 }
 
-console.log(failed ? `\n${failed} test(s) failed\n` : '\nAll contrast tests passed\n')
+{
+  // ONE FIT, THEN PER-CONTRAST EXTRACTION
+  //
+  // The studio no longer refits per comparison; it pulls the comparison out of
+  // a single cell-means fit as a weight vector over group means. If the weights
+  // are right the statistics are right, and that is checkable with no R: apply
+  // the vector to known group means and see whether the number that comes out
+  // is the quantity the comparison claims.
+  console.log('\nCONTRAST WEIGHTS OVER GROUP MEANS')
+  const sz = new Map([['A', 3], ['B', 3], ['C', 6], ['D', 2]])
+  const apply = (w, mu) => w.reduce((a, x) => a + x.weight * mu[x.level], 0)
+
+  const pair = contrastWeights(['A'], ['B'], sz)
+  check('one group a side is +1 / -1', pair, [
+    { level: 'A', weight: 1 }, { level: 'B', weight: -1 }])
+  check('and it reads as the plain difference of means',
+    apply(pair, { A: 5, B: 2 }), 3)
+
+  const pooled = contrastWeights(['A', 'B'], ['C'], sz)
+  check('a pooled side is weighted by sample count, not 1/k',
+    pooled.map(w => w.weight), [0.5, 0.5, -1])
+  check('equal groups pooled give their mean',
+    apply(pooled, { A: 4, B: 6, C: 1 }), 4)
+
+  const uneven = contrastWeights(['A', 'D'], ['C'], sz)   // n = 3 and 2
+  check('unequal groups are weighted 3:2, not 1:1',
+    uneven.map(w => Math.round(w.weight * 100) / 100), [0.6, 0.4, -1])
+  check('so the pooled side is the SAMPLE mean',
+    Math.round(apply(uneven, { A: 10, D: 5, C: 0 }) * 100) / 100, 8)
+
+  check('every vector sums to zero — a difference, with no intercept',
+    [pair, pooled, uneven].map(w =>
+      Math.abs(w.reduce((a, x) => a + x.weight, 0)) < 1e-12), [true, true, true])
+  check('each side sums to +1 and -1',
+    [pooled, uneven].map(w => [
+      Math.round(w.filter(x => x.weight > 0).reduce((a, x) => a + x.weight, 0) * 1e6) / 1e6,
+      Math.round(w.filter(x => x.weight < 0).reduce((a, x) => a + x.weight, 0) * 1e6) / 1e6]),
+    [[1, -1], [1, -1]])
+
+  let threw = false
+  try { contrastWeights(['A'], ['Z'], sz) } catch { threw = true }
+  check('a side with no samples is refused, not silently zero', threw, true)
+}
+
+console.log(failed ?  `\n${failed} test(s) failed\n` : '\nAll contrast tests passed\n')
 process.exit(failed ? 1 : 0)
