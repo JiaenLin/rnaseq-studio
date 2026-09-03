@@ -45,8 +45,8 @@ async function getWebR(log: (m: string) => void): Promise<any> {
  */
 async function ensureDESeq2(webR: any, log: (m: string) => void) {
   if (installed) return
-  log('Installing DESeq2… (first run downloads ~tens of MB, then cached)')
-  await webR.installPackages(['DESeq2'], {
+  log('Installing DESeq2 + ashr… (first run downloads ~tens of MB, then cached)')
+  await webR.installPackages(['DESeq2', 'ashr'], {
     repos: [locfitRepo(), 'https://bioc.r-universe.dev', 'https://repo.r-wasm.org'],
   })
   installed = true
@@ -125,12 +125,40 @@ const EXTRACT_R = `local({
   nm <- paste0("cond", w$level)
   if (!all(nm %in% rn)) stop("a contrast names a group that is not in the fit")
   for (i in seq_len(nrow(w))) cv[nm[i]] <- cv[nm[i]] + w$weight[i]
-  res <- as.data.frame(results(dds, contrast = cv))
+
+  # The filter statistic must be PER COMPARISON. results() screens out genes
+  # with no chance of significance using the mean of normalised counts and sets
+  # their padj to NA; under one fit over every group that mean spans every
+  # sample, which is the wrong denominator for a comparison between two of
+  # them. A gene loud in some other group survives the screen and is handed a
+  # p-value from samples where it reads zero; a gene specific to THIS
+  # comparison has its mean diluted by every group it is absent from and can
+  # come back NA. Compute it over only the groups the comparison names, and
+  # report it as baseMean too, so the MA plot and the filter agree.
+  cond <- as.character(colData(dds)$cond)
+  lev <- sub("^cond", "", names(cv)[abs(cv) > 1e-12])
+  inC <- cond %in% lev
+  if (!any(inC)) stop("the comparison names no sample")
+  sf <- sizeFactors(dds)
+  bm <- if (is.null(sf)) rowMeans(counts(dds, normalized = TRUE)[, inC, drop = FALSE])
+        else rowMeans(sweep(counts(dds)[, inC, drop = FALSE], 2, sf[inC], "/"))
+
+  res <- results(dds, contrast = cv, filter = bm)
+  # Shrink the fold changes: the raw MLE is inflated for low-count genes, which
+  # is why DESeq2 puts lfcShrink beside results() in its own quickstart. apeglm
+  # cannot take a contrast vector and normal refuses a design with no
+  # intercept, so ashr is the one that fits a cell-means fit. Passing res keeps
+  # the p-values and the per-comparison padj from just above.
+  sh <- tryCatch(suppressMessages(
+          lfcShrink(dds, contrast = cv, type = "ashr", res = res)),
+        error = function(e) NULL)
+  shrunk <- !is.null(sh)
+  if (shrunk) res <- sh
   write.csv(data.frame(gene_id = rownames(res), gene_name = rownames(res),
-            baseMean = round(res$baseMean, 3), log2FoldChange = round(res$log2FoldChange, 5),
+            baseMean = round(bm, 3), log2FoldChange = round(res$log2FoldChange, 5),
             lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj),
             "/work/deg.csv", row.names = FALSE)
-  sprintf("%d", sum(res$padj < 0.05, na.rm = TRUE))
+  sprintf("%d|%s", sum(res$padj < 0.05, na.rm = TRUE), if (shrunk) "ashr" else "raw")
 })`
 
 /**
@@ -261,9 +289,10 @@ export async function runDESeq2(
     : `One fit over ${nS} samples in ${nG} groups, ${nGenes} genes.`)
 
   log(`Extracting ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
-  const nDeg = await webR.evalRString(EXTRACT_R)
+  const [nDeg, shrink] = (await webR.evalRString(EXTRACT_R)).split('|')
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
-  log(`Done — ${nDeg} genes at padj < 0.05.`)
+  log(`Done — ${nDeg} genes at padj < 0.05`
+    + (shrink === 'ashr' ? ', fold changes shrunk (ashr).' : '. Shrinkage unavailable — raw MLE fold changes.'))
   return withSymbols(parseDegCsv(csv), geneNames ?? namesOf(raw))
 }
 
