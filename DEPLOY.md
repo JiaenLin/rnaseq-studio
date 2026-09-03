@@ -5,8 +5,8 @@ a **catalogue of published datasets**. Everything else is identical, from the sa
 
 ## 1 · The deployment
 
-Import the repository into Vercel. `vercel.json` already sets the build, the SPA rewrite and
-the two headers that matter:
+Import the repository into Vercel. `vercel.json` already sets the build and the two headers
+that matter:
 
 ```
 Cross-Origin-Opener-Policy:   same-origin
@@ -14,6 +14,10 @@ Cross-Origin-Embedder-Policy: credentialless
 ```
 
 Those give `SharedArrayBuffer`, which webR needs to run DESeq2.
+
+There is no SPA rewrite, deliberately. The studio has one route and no client-side router, so
+an unknown path is a genuine 404 and should say so; a catch-all rewrite would answer every
+typo with the application.
 
 **Why `credentialless` and not `require-corp`.** The studio installs R packages from three
 hosts. Two of them cooperate; one does not:

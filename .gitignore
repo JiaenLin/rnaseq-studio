@@ -27,3 +27,4 @@ dist-ssr
 # See DEPLOY.md; catalogue.example.json is the committed shape.
 public/catalogue.json
 public/datasets/
+.vercel

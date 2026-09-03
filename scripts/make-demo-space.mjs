@@ -46,6 +46,21 @@ function genePool(species) {
   return pool
 }
 
+/** Hallmark sets for a species, id -> Set of symbols. See fetch-genesets.mjs. */
+function hallmark(species) {
+  const raw = readFileSync(new URL(`../public/genesets/${species}.hallmark.gs`, import.meta.url))
+  const text = (raw[0] === 0x1f && raw[1] === 0x8b ? gunzipSync(raw) : raw).toString('utf8')
+  const lines = text.trimEnd().split('\n')
+  if (lines[0].split('\t')[0] !== 'MSIG1') throw new Error(`${species}.hallmark.gs: not an MSIG1 file`)
+  const vocab = lines[1].split('\t')
+  const sets = new Map()
+  for (const line of lines.slice(2)) {
+    const [id, , idx] = line.split('\t')
+    sets.set(id, new Set(idx.split(',').map(i => vocab[+i])))
+  }
+  return sets
+}
+
 const mulberry32 = a => () => {
   a |= 0; a = (a + 0x6d2b79f5) | 0
   let t = Math.imul(a ^ (a >>> 15), 1 | a)
@@ -60,6 +75,14 @@ const DATASETS = [
     description: 'Two genotypes at two temperatures. The genotype effect differs between them, so the interaction is the question — the Overlap tab is where you ask it.',
     conditions: ['WT_Thermo', 'WT_Cold', 'KO_Thermo', 'KO_Cold'],
     contrasts: [['WT_Cold', 'WT_Thermo'], ['KO_Cold', 'KO_Thermo'], ['KO_Cold', 'WT_Cold'], ['KO_Thermo', 'WT_Thermo']],
+    // Cold drives thermogenesis in the wild type and cannot in the knockout,
+    // which is the interaction the description promises. Whether the app finds
+    // it is then a real question with a real answer.
+    signature: {
+      WT_Cold: { OXIDATIVE_PHOSPHORYLATION: 1.5, FATTY_ACID_METABOLISM: 1.3, ADIPOGENESIS: 1.1, MYC_TARGETS_V1: -0.8 },
+      KO_Thermo: { OXIDATIVE_PHOSPHORYLATION: -0.6, TNFA_SIGNALING_VIA_NFKB: 0.7 },
+      KO_Cold: { OXIDATIVE_PHOSPHORYLATION: -0.5, FATTY_ACID_METABOLISM: -0.4, INFLAMMATORY_RESPONSE: 1.4, TNFA_SIGNALING_VIA_NFKB: 1.3 },
+    },
     published: '2026-08-14',
   },
   {
@@ -68,6 +91,13 @@ const DATASETS = [
     description: 'Chow against 4, 8 and 16 weeks of high-fat feeding. Ordered arms — set the figure order before exporting anything.',
     conditions: ['Chow', 'HFD_4w', 'HFD_8w', 'HFD_16w'],
     contrasts: [['HFD_4w', 'Chow'], ['HFD_8w', 'Chow'], ['HFD_16w', 'Chow']],
+    // Metabolic first, inflammatory and fibrotic later — a time course that
+    // orders, so the figure order matters and the Overlap tab has a nesting.
+    signature: {
+      HFD_4w: { FATTY_ACID_METABOLISM: 1.1, XENOBIOTIC_METABOLISM: 0.8, BILE_ACID_METABOLISM: -0.6 },
+      HFD_8w: { FATTY_ACID_METABOLISM: 1.4, XENOBIOTIC_METABOLISM: 1.0, BILE_ACID_METABOLISM: -0.8, INFLAMMATORY_RESPONSE: 0.9 },
+      HFD_16w: { FATTY_ACID_METABOLISM: 1.5, XENOBIOTIC_METABOLISM: 1.1, BILE_ACID_METABOLISM: -0.9, INFLAMMATORY_RESPONSE: 1.5, EPITHELIAL_MESENCHYMAL_TRANSITION: 1.3, TGF_BETA_SIGNALING: 1.1 },
+    },
     published: '2026-07-02',
   },
   {
@@ -76,6 +106,9 @@ const DATASETS = [
     description: 'Whole blood before and one week after a booster. Carries Ensembl accessions and no symbol column, so it opens asking to be converted.',
     conditions: ['D0', 'D7'],
     contrasts: [['D7', 'D0']],
+    signature: {
+      D7: { INTERFERON_ALPHA_RESPONSE: 1.9, INTERFERON_GAMMA_RESPONSE: 1.7, INFLAMMATORY_RESPONSE: 1.1, MYC_TARGETS_V1: -0.6 },
+    },
     published: '2026-06-19',
   },
   {
@@ -84,6 +117,11 @@ const DATASETS = [
     description: 'Undifferentiated iPSC against day-30 cortical neurons from the same three donors. A very large effect, useful as a sanity check.',
     conditions: ['iPSC', 'Neuron_D30'],
     contrasts: [['Neuron_D30', 'iPSC']],
+    // Differentiation switches the cell cycle off; that is the largest and most
+    // reliable thing in the comparison, and it is what hallmark can see.
+    signature: {
+      Neuron_D30: { E2F_TARGETS: -2.1, G2M_CHECKPOINT: -2.0, MYC_TARGETS_V1: -1.6, MITOTIC_SPINDLE: -1.4, APICAL_JUNCTION: 1.2, NOTCH_SIGNALING: 1.0, HEDGEHOG_SIGNALING: 1.0 },
+    },
     published: '2026-05-08',
   },
   {
@@ -92,6 +130,9 @@ const DATASETS = [
     description: 'Sham against 24 h reperfusion. A strong injury signature — useful for checking a pipeline end to end.',
     conditions: ['Sham', 'IRI_24h'],
     contrasts: [['IRI_24h', 'Sham']],
+    signature: {
+      IRI_24h: { TNFA_SIGNALING_VIA_NFKB: 1.9, INFLAMMATORY_RESPONSE: 1.8, HYPOXIA: 1.5, APOPTOSIS: 1.2, P53_PATHWAY: 1.0, OXIDATIVE_PHOSPHORYLATION: -1.3, FATTY_ACID_METABOLISM: -1.1 },
+    },
     published: '2026-04-11',
   },
 ]
@@ -125,8 +166,31 @@ function build(spec) {
   // A lognormal base mean per gene, then a per-condition effect on 15% of them,
   // then noise. Enough structure for PCA, clustering and a volcano.
   const base = genes.map(() => Math.exp(1.8 + rnd() * 5.2))
-  const effect = genes.map(() => spec.conditions.map((_, ci) =>
-    ci === 0 || rnd() > 0.15 ? 0 : gauss() * 1.5))
+
+  // Differential expression comes from two places. A little of it is scattered,
+  // which is what real data looks like. Most of it is a signature: the genes of
+  // a named hallmark set move together, in the direction the biology in
+  // DATASETS says they move. Without that second part every gene is DE at
+  // random, no gene set is enriched in any of them, and the enrichment tab —
+  // the thing this application is for — reports nothing on every dataset in
+  // the catalogue.
+  const sets = spec.signature ? hallmark(spec.species) : null
+  const members = new Map()
+  for (const arm of Object.values(spec.signature ?? {}))
+    for (const name of Object.keys(arm)) {
+      const key = `HALLMARK_${name}`
+      const set = sets.get(key)
+      if (!set) throw new Error(`${spec.slug}: no hallmark set ${key}`)
+      members.set(key, set)
+    }
+  const effect = genes.map(([, sym]) => spec.conditions.map((ci_, ci) => {
+    let e = ci === 0 || rnd() > 0.05 ? 0 : gauss() * 1.2
+    if (ci === 0) return 0
+    const arm = spec.signature?.[spec.conditions[ci]]
+    if (arm) for (const [name, weight] of Object.entries(arm))
+      if (members.get(`HALLMARK_${name}`).has(sym)) e += weight * (0.65 + rnd() * 0.7)
+    return e
+  }))
   const noise = 0.22
 
   // Independent per-gene noise alone puts every replicate of a group on the
