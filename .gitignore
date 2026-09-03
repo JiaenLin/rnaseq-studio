@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# The data space is per-deployment, not part of the source.
+# See DEPLOY.md; catalogue.example.json is the committed shape.
+public/catalogue.json
+public/datasets/

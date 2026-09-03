@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node scripts/test-bundle.mjs && node scripts/test-ora.mjs && node scripts/test-genesets.mjs && node scripts/test-pca.mjs && node scripts/test-contrast.mjs && node scripts/test-samplecheck.mjs && node scripts/test-venn.mjs && node scripts/test-gsea.mjs && node scripts/test-order.mjs && node scripts/test-symbols.mjs",
-    "preview": "vite preview"
+    "test": "node scripts/test-bundle.mjs && node scripts/test-ora.mjs && node scripts/test-genesets.mjs && node scripts/test-pca.mjs && node scripts/test-contrast.mjs && node scripts/test-samplecheck.mjs && node scripts/test-venn.mjs && node scripts/test-gsea.mjs && node scripts/test-order.mjs && node scripts/test-symbols.mjs && node scripts/test-catalogue.mjs",
+    "preview": "vite preview",
+    "demo:space": "node scripts/make-demo-space.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",

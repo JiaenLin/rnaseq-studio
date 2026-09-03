@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, openingContrast, sideLabel } from './lib/design'
@@ -20,6 +20,9 @@ import DEGTable from './components/DEGTable'
 import Overlap from './components/Overlap'
 import Enrichment from './components/Enrichment'
 import Methods from './components/Methods'
+import DataSpace from './components/DataSpace'
+import type { CatalogueEntry } from './lib/catalogue'
+import { loadCatalogue } from './lib/catalogue'
 
 const DOI_URL = 'https://doi.org/10.5281/zenodo.21514152'
 // The two upstream apps that produce a bundle, by what the user already has.
@@ -106,6 +109,18 @@ export default function App() {
    */
   const [run, setRun] = useState<{ pair: string; running: boolean; log: string }>(
     { pair: '', running: false, log: '' })
+  /**
+   * Whether this deployment publishes datasets.
+   *
+   * Asked once, here, so the header button and the landing section agree — and
+   * so a deployment without a catalogue never renders a control that leads
+   * nowhere. `null` is "no data space", which is the ordinary state of the
+   * public studio and not an error anywhere.
+   */
+  const [hasSpace, setHasSpace] = useState(false)
+  const [showSpace, setShowSpace] = useState(false)
+  useEffect(() => { loadCatalogue().then(c => setHasSpace(!!c), () => setHasSpace(false)) }, [])
+
   const [showHelp, setShowHelp] = useState(false)
   const [showStart, setShowStart] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -195,6 +210,19 @@ export default function App() {
     try { adopt(await loadBundleFromZip(f)) }
     catch (e: any) { setError(`Could not read ${f.name}: ${e?.message || e}`) }
     finally { setLoading(false) }
+  }
+
+  /**
+   * A published dataset, adopted exactly as a dropped file is.
+   *
+   * By the time `adopt` runs there is no difference between the two, which is
+   * the point: every tab, every re-run and every export works on a catalogue
+   * dataset without knowing it came from one.
+   */
+  const openPublished = (b: Bundle, entry: CatalogueEntry) => {
+    adopt(b)
+    setShowSpace(false)
+    document.title = `${entry.title} — RNA-seq Studio`
   }
 
   const onDrop = (e: React.DragEvent) => {
@@ -388,6 +416,10 @@ export default function App() {
               the two in step — so the header could name one comparison over
               another one's numbers. There is one selector now, in the bar
               below, where the rest of the comparison's context is. */}
+          {hasSpace && bundle && (
+            <button className="btn" onClick={() => setShowSpace(true)}
+              title="Datasets published on this deployment">Datasets</button>
+          )}
           {bundle && (
             <>
               <button className="btn btn-primary" onClick={() => zipRef.current?.click()}>⭱ Open bundle (.zip)</button>
@@ -481,6 +513,9 @@ export default function App() {
             onOpenFolder={() => fileRef.current?.click()}
             onDemo={loadDemo}
             onFormat={() => setShowHelp(true)}
+            space={hasSpace
+              ? <DataSpace onOpen={openPublished} onError={setError} />
+              : null}
           />
         )}
         {!loading && bundle && contrast && (
@@ -539,10 +574,30 @@ export default function App() {
       </main>
 
       <footer className="border-t border-slate-200 py-3 text-center text-xs text-slate-400 dark:border-slate-700">
-        Runs locally in your browser · your data never leaves this device ·{' '}
+        Runs in your browser · nothing you open is uploaded ·{' '}
         <button className="underline hover:text-indigo-600" onClick={() => setShowHelp(true)}>please cite</button>{' '}
         <a className="underline hover:text-indigo-600" href={DOI_URL} target="_blank" rel="noopener noreferrer">(DOI)</a>
       </footer>
+
+      {showSpace && (
+        <div className="modal-overlay fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4"
+          onClick={() => setShowSpace(false)}>
+          <div className="modal-panel card my-8 w-full max-w-3xl p-6" onClick={e => e.stopPropagation()}>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Published datasets</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Opening one replaces what is on screen. Nothing you have open is uploaded or
+                  changed — a dataset from here is read, and read only.
+                </p>
+              </div>
+              <button className="btn py-1" onClick={() => setShowSpace(false)}>✕</button>
+            </div>
+            <DataSpace compact onOpen={openPublished}
+              onError={m => { setError(m); setShowSpace(false) }} />
+          </div>
+        </div>
+      )}
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showStart && (
@@ -612,24 +667,35 @@ function NeedsStats({ contrast, canCompute, running, runLog, withheld, onRun }: 
  * on screen at first paint reads as "your data", and every number on it belongs
  * to someone else. The demo is offered explicitly, and clearly labelled.
  */
-function Landing({ onOpenZip, onOpenFolder, onDemo, onFormat }: {
+function Landing({ onOpenZip, onOpenFolder, onDemo, onFormat, space }: {
   onOpenZip: () => void; onOpenFolder: () => void; onDemo: () => void; onFormat: () => void
+  /** The published datasets, on a deployment that has any. */
+  space: React.ReactNode
 }) {
   return (
-    <div className="mx-auto max-w-3xl py-6">
+    <div className={`mx-auto py-6 ${space ? 'max-w-4xl' : 'max-w-3xl'}`}>
       <div className="text-center">
         <h2 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-          Explore your RNA-seq results in the browser
+          {space ? 'Open a dataset' : 'Explore your RNA-seq results in the browser'}
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-[13.5px] leading-relaxed text-slate-500">
-          Gene search, volcano plots, tunable enrichment, your own gene sets and a drafted Methods
-          paragraph — from a result bundle your pipeline already produced.
+          {space
+            ? 'Gene search, volcano plots, tunable enrichment, your own gene sets and a drafted Methods paragraph — on a published dataset, or on results of your own.'
+            : 'Gene search, volcano plots, tunable enrichment, your own gene sets and a drafted Methods paragraph — from a result bundle your pipeline already produced.'}
         </p>
       </div>
 
+      {/* On a deployment with a data space this IS the front door, so it goes
+          first and the file controls become the alternative below it. Leading
+          with an empty drop target on a site whose whole purpose is its
+          catalogue would bury the thing people came for. */}
+      {space && <div className="mt-7">{space}</div>}
+
       {/* Primary action. The whole card is the drop target the page already listens on. */}
-      <div className="card mt-8 border-dashed p-8 text-center">
-        <p className="text-[15px] font-semibold">Open your result bundle</p>
+      <div className={`card border-dashed p-8 text-center ${space ? 'mt-5' : 'mt-8'}`}>
+        <p className="text-[15px] font-semibold">
+          {space ? 'Or open your own results' : 'Open your result bundle'}
+        </p>
         <p className="mt-1 text-[12.5px] text-slate-500">
           Drop a <b>.zip</b> anywhere on this page, or pick one below.
         </p>
@@ -638,7 +704,7 @@ function Landing({ onOpenZip, onOpenFolder, onDemo, onFormat }: {
           <button className="btn" onClick={onOpenFolder}>Open a folder…</button>
         </div>
         <p className="mt-4 text-[11.5px] text-slate-400">
-          Everything runs client-side — your data never leaves this device.
+          Everything runs client-side — the file you pick is read here, never uploaded.
         </p>
       </div>
 

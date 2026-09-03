@@ -1,0 +1,29 @@
+{
+  "updated": "2026-09-03",
+  "datasets": [
+    {
+      "slug": "brown-fat-cold-2026",
+      "title": "Brown adipose, cold exposure, Ucp1 knockout",
+      "description": "Two genotypes at two temperatures. The genotype effect differs between them, so the interaction term is the question this cohort was built to ask.",
+      "url": "https://<your-bucket>.public.blob.vercel-storage.com/brown-fat-cold-2026.zip",
+      "species": "mouse",
+      "bytes": 2846072,
+      "samples": 16,
+      "genes": 18400,
+      "conditions": [
+        "WT_Thermo",
+        "WT_Cold",
+        "KO_Thermo",
+        "KO_Cold"
+      ],
+      "contrasts": [
+        "KO vs WT (cold)",
+        "KO vs WT (thermoneutral)",
+        "Cold vs thermoneutral (WT)",
+        "Interaction"
+      ],
+      "source": "Lin lab",
+      "published": "2026-08-14"
+    }
+  ]
+}
