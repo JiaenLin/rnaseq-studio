@@ -13,6 +13,19 @@
 
 import type { CountsMatrix, DEGRow, SampleRow } from '../types'
 
+/**
+ * Fold-change shrinkage for a run performed HERE. apeglm, or nothing.
+ *
+ * There is deliberately no third option. ashr was the only estimator that
+ * takes a contrast vector, which is why it was here — and measured over the
+ * 110 tables of an 11-tissue ageing atlas it failed in both directions at
+ * once: it shrank well-measured significant effects to 0.67 of their MLE, and
+ * left 287 genes carrying |log2FC| > 5, up to 25.4, because those are genes
+ * with zero counts in one group where a normal-mixture prior cannot pull the
+ * estimate back. apeglm gave 0.86 and 0.002 on the same data.
+ */
+export type Shrink = 'none' | 'apeglm'
+
 const WEBR_URL = 'https://webr.r-wasm.org/v0.6.0/webr.mjs'
 // Our own WASM repo (hosts the locfit stub DESeq2 imports), served with the app.
 // Resolved lazily: this module's pure helpers are unit-tested outside a browser,
@@ -20,7 +33,7 @@ const WEBR_URL = 'https://webr.r-wasm.org/v0.6.0/webr.mjs'
 const locfitRepo = () => new URL('wasm/', document.baseURI).href.replace(/\/$/, '')
 
 let webRPromise: Promise<any> | null = null
-let installed = false
+const installed = new Set<string>()
 
 async function getWebR(log: (m: string) => void): Promise<any> {
   if (!webRPromise) {
@@ -43,13 +56,15 @@ async function getWebR(log: (m: string) => void): Promise<any> {
  * `lfcShrink` anywhere in this file — so every reader paid a download for a
  * package that never ran.
  */
-async function ensureDESeq2(webR: any, log: (m: string) => void) {
-  if (installed) return
-  log('Installing DESeq2… (first run downloads ~tens of MB, then cached)')
-  await webR.installPackages(['DESeq2'], {
+async function ensureDESeq2(webR: any, shrink: Shrink, log: (m: string) => void) {
+  const key = `deseq2:${shrink}`
+  if (installed.has(key)) return
+  const pkgs = shrink === 'apeglm' ? ['DESeq2', 'apeglm'] : ['DESeq2']
+  log(`Installing ${pkgs.join(' + ')}… (first run downloads ~tens of MB, then cached)`)
+  await webR.installPackages(pkgs, {
     repos: [locfitRepo(), 'https://bioc.r-universe.dev', 'https://repo.r-wasm.org'],
   })
-  installed = true
+  installed.add(key)
 }
 
 /**
@@ -102,6 +117,8 @@ const FIT_R = `local({
                     error = function(e) suppressWarnings(DESeq(dds, fitType = "mean", quiet = TRUE)))
     assign(".studio_dds", dds, envir = globalenv())
     assign(".studio_key", KEY, envir = globalenv())
+    # A new fit invalidates every releveled copy of the old one.
+    if (exists(".studio_ape", envir = globalenv())) rm(".studio_ape", envir = globalenv())
     sprintf("fitted|%d|%d|%d", ncol(dds), nlevels(cd$cond), nrow(dds))
   } else {
     dds <- get(".studio_dds", envir = globalenv())
@@ -120,6 +137,7 @@ const FIT_R = `local({
  */
 const EXTRACT_R = `local({
   suppressMessages(library(DESeq2))
+  SHRINK <- "__SHRINK__"
   dds <- get(".studio_dds", envir = globalenv())
   w <- read.csv("/work/contrast.csv", stringsAsFactors = FALSE, check.names = FALSE)
   rn <- resultsNames(dds)
@@ -147,31 +165,53 @@ const EXTRACT_R = `local({
 
   res <- results(dds, contrast = cv, filter = bm)
 
-  # NO SHRINKAGE HERE. The fold change is the maximum likelihood estimate, and
-  # lfcSE beside it says how much to believe it.
+  # SHRINKAGE IS apeglm OR NOTHING.
   #
-  # ashr was here and is gone. Measured over the 110 tables of an 11-tissue
-  # ageing atlas it failed in both directions at once: it shrank well-measured
-  # significant effects to 0.67 of their MLE, and left 287 genes carrying
-  # |log2FC| > 5 — up to 25.4, a 44-million-fold change — because those are
-  # genes with zero counts in one group, where the estimate is unbounded and a
-  # normal-mixture prior cannot pull it back. None of its settings moved either
-  # number.
+  # apeglm needs a COEFFICIENT and this is a cell-means fit, so the contrast is
+  # reached by releveling to the denominator and re-running ONLY the Wald test.
+  # nbinomWaldTest reuses the dispersions already estimated, so the model is
+  # reparameterised rather than refitted — the expensive part is not repeated.
   #
-  # apeglm is the one estimator worth having and it cannot run here: it needs a
-  # COEFFICIENT rather than a contrast vector, which a cell-means design has
-  # none of, and there is no WebAssembly build of it published anywhere —
-  # repo.r-wasm.org carries ashr but not apeglm. RNA-seq Lab offers it because
-  # it builds the binary itself; a re-run in this app reports the MLE and says
-  # so, rather than quietly using a different estimator from the bundle it sits
-  # beside.
+  # The releveled objects are cached beside the fit and under the SAME key, so
+  # opening a different bundle discards them together. One relevel serves every
+  # comparison sharing a denominator.
+  #
+  # p-values, padj and baseMean stay from the results() above with its
+  # per-contrast filter; only the effect size and its SE are replaced.
+  mleLFC <- res$log2FoldChange; mleSE <- res$lfcSE
+  shrunk <- "mle"
+  if (SHRINK == "apeglm" && sum(abs(cv) > 1e-12) == 2 &&
+      sum(cv[cv > 0]) == 1 && sum(cv[cv < 0]) == -1) {
+    numL <- sub("^cond", "", names(cv)[cv > 1e-12])
+    denL <- sub("^cond", "", names(cv)[cv < -1e-12])
+    cache <- if (exists(".studio_ape", envir = globalenv())) get(".studio_ape", envir = globalenv())
+             else new.env(parent = emptyenv())
+    if (is.null(cache[[denL]])) {
+      d2 <- dds
+      design(d2) <- ~ cond
+      d2$cond <- relevel(d2$cond, ref = denL)
+      assign(denL, nbinomWaldTest(d2, quiet = TRUE), envir = cache)
+      assign(".studio_ape", cache, envir = globalenv())
+    }
+    d2 <- cache[[denL]]
+    cf <- paste0("cond_", numL, "_vs_", denL)
+    sh <- if (cf %in% resultsNames(d2))
+      tryCatch(suppressMessages(lfcShrink(d2, coef = cf, type = "apeglm", quiet = TRUE)),
+               error = function(e) NULL) else NULL
+    if (!is.null(sh)) {
+      j <- match(rownames(res), rownames(sh))
+      res$log2FoldChange <- sh$log2FoldChange[j]
+      res$lfcSE <- sh$lfcSE[j]
+      shrunk <- "apeglm"
+    }
+  }
+
   write.csv(data.frame(gene_id = rownames(res), gene_name = rownames(res),
             baseMean = round(bm, 3), log2FoldChange = round(res$log2FoldChange, 5),
             lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj,
-            log2FoldChange_MLE = round(res$log2FoldChange, 5),
-            lfcSE_MLE = round(res$lfcSE, 5)),
+            log2FoldChange_MLE = round(mleLFC, 5), lfcSE_MLE = round(mleSE, 5)),
             "/work/deg.csv", row.names = FALSE)
-  sprintf("%d|%s", sum(res$padj < 0.05, na.rm = TRUE), "mle")
+  sprintf("%d|%s", sum(res$padj < 0.05, na.rm = TRUE), shrunk)
 })`
 
 /**
@@ -236,6 +276,8 @@ export interface DeseqRequest {
   denominator: string[]
   /** Sample names the reader has taken out of the analysis. */
   excluded?: readonly string[]
+  /** apeglm or nothing; defaults to nothing. */
+  shrink?: Shrink
   /**
    * The conditions this fit is allowed to span, when the bundle is blocked.
    *
@@ -281,7 +323,7 @@ export interface DeseqRequest {
  * does not fit one — the bundle's own exporter does.
  */
 export async function runDESeq2(
-  { raw, samples, numerator, denominator, excluded = [], geneNames, scope }: DeseqRequest,
+  { raw, samples, numerator, denominator, excluded = [], geneNames, scope, shrink = 'none' }: DeseqRequest,
   log: (m: string) => void,
 ): Promise<DEGRow[]> {
   const cond: Record<string, string> = {}
@@ -305,7 +347,7 @@ export async function runDESeq2(
     throw new Error(`DESeq2 needs at least 2 replicates per side (${nameNum}: ${nNum}, ${nameDen}: ${nDen}).`)
 
   const webR = await getWebR(log)
-  await ensureDESeq2(webR, log)
+  await ensureDESeq2(webR, shrink, log)
 
   // Group labels are recoded to g1..gN before they reach R: real labels carry
   // "+", "-" and spaces, which make.names() mangles into something that no
@@ -345,12 +387,12 @@ export async function runDESeq2(
     : `One fit over ${nS} samples in ${nG} groups, ${nGenes} genes.`)
 
   log(`Extracting ${nameNum} (n=${nNum}) vs ${nameDen} (n=${nDen})…`)
-  const [nDeg, shrink] = (await webR.evalRString(EXTRACT_R)).split('|')
+  const [nDeg, used] = (await webR.evalRString(EXTRACT_R.replace('__SHRINK__', shrink))).split('|')
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
   log(`Done — ${nDeg} genes at padj < 0.05`
-    + (shrink === 'mle'
-      ? '. Fold changes are the maximum likelihood estimate — check lfcSE before trusting a large one.'
-      : '.'))
+    + (used === 'apeglm'
+      ? ', fold changes shrunk (apeglm).'
+      : '. Fold changes are the maximum likelihood estimate — check lfcSE before trusting a large one.'))
   return withSymbols(parseDegCsv(csv), geneNames ?? namesOf(raw))
 }
 

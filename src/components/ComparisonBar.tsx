@@ -1,6 +1,7 @@
 import type { Bundle } from '../types'
 import type { ComparisonState } from '../lib/contrast'
 import type { GroupSel } from '../lib/design'
+import type { Shrink } from '../lib/deseq'
 import { conditionSizes } from '../lib/contrast'
 import { displayOrder, sideLabel } from '../lib/design'
 import { moveItem } from '../lib/order'
@@ -21,7 +22,7 @@ import { moveItem } from '../lib/order'
  * Both are DESeq2; neither is a lesser answer.
  */
 export default function ComparisonBar({
-  bundle, sel, state, running, runLog, onSel, onRun, onCrossBlock,
+  bundle, sel, state, running, runLog, onSel, onRun, onCrossBlock, shrink = 'none', onShrink,
 }: {
   bundle: Bundle
   sel: GroupSel
@@ -33,6 +34,9 @@ export default function ComparisonBar({
   onRun: () => void
   /** Take the reader to the view that DOES answer a cross-block question. */
   onCrossBlock?: () => void
+  /** Shrinkage for a run performed here. apeglm or nothing; never ashr. */
+  shrink?: Shrink
+  onShrink?: (s: Shrink) => void
 }) {
   // After exclusions, so a chip can never disagree with the summary line below it.
   const sizes = conditionSizes(bundle, sel.excluded)
@@ -80,12 +84,28 @@ export default function ComparisonBar({
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <Provenance state={state} />
           {state.source === 'computable' && (
-            <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
-              {running ? 'Running DESeq2…'
-                : state.hiddenPrecomputed
-                  ? 'Re-run without the excluded samples'
-                  : 'Run DESeq2 for this pair'}
-            </button>
+            <>
+              <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
+                {running ? 'Running DESeq2…'
+                  : state.hiddenPrecomputed
+                    ? 'Re-run without the excluded samples'
+                    : 'Run DESeq2 for this pair'}
+              </button>
+              {/* Shown beside the button because it changes what that button
+                  produces. Two options and no more: ashr is not offered here or
+                  anywhere. Default none, so a run matches what the pipeline's
+                  own tables report unless the reader asks otherwise. */}
+              {onShrink && (
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  shrinkage
+                  <select className="input py-0.5 text-[11px]" value={shrink} disabled={running}
+                    onChange={e => onShrink(e.target.value as Shrink)}>
+                    <option value="none">none (MLE)</option>
+                    <option value="apeglm">apeglm</option>
+                  </select>
+                </label>
+              )}
+            </>
           )}
           {running && <span className="text-xs text-slate-400">{runLog}</span>}
         </div>

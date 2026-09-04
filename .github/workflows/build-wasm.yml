@@ -1,8 +1,14 @@
-name: Build WASM deps (locfit)
+name: Build WASM deps (locfit, apeglm)
 
-# Builds the CRAN dependency `locfit` (no public WASM binary) into a CRAN-like
-# WebAssembly repo committed at public/wasm/, which Vite ships to /<repo>/wasm/ so
-# webR can install DESeq2. Run manually (workflow_dispatch).
+# Builds the dependencies with no public WASM binary into a CRAN-like WebAssembly
+# repo committed at public/wasm/, which Vite ships to /<repo>/wasm/. Run manually
+# (workflow_dispatch).
+#
+#   locfit  DESeq2 imports it; no wasm build exists anywhere.
+#   apeglm  the only shrinkage estimator this app offers, and likewise absent:
+#           repo.r-wasm.org carries ashr but not apeglm, and bioc.r-universe
+#           publishes no emscripten binary. Its compiled dependencies do exist
+#           there, so only apeglm itself is built here.
 on:
   workflow_dispatch:
 
@@ -17,7 +23,7 @@ jobs:
       - name: Build locfit for WebAssembly
         uses: r-wasm/actions/build-rwasm@v3
         with:
-          packages: "local::./wasm-src/locfit"
+          packages: "local::./wasm-src/locfit, bioc::apeglm"
           repo-path: "public/wasm"
           strip: "demo, doc, examples, help, html, include, tests, vignette"
           webr-image: "ghcr.io/r-wasm/webr:main"
@@ -27,5 +33,17 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           rm -rf public/wasm/.gitignore
           git add public/wasm
-          git commit -m "Build locfit WASM binary" || { echo "no changes"; exit 0; }
-          git push
+          if git commit -m "Build locfit + apeglm WASM binaries"; then
+            git push
+          else
+            echo "no changes to commit"
+          fi
+      # A push made with GITHUB_TOKEN does NOT trigger other workflows — GitHub
+      # blocks that to prevent recursion. So the deploy that would SERVE these
+      # binaries never fires on its own, and the build goes green while the
+      # files stay unpublished. That happened once; this stops it happening
+      # again. Runs even when nothing was committed, which is harmless.
+      - name: Publish the rebuilt repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "Deploy to GitHub Pages" --ref main || echo "no Pages workflow to run"

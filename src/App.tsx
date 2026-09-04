@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, openingContrast, sideLabel } from './lib/design'
-import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
+import { computedContrastId, countSignificant, runDESeq2, type Shrink } from './lib/deseq'
 import { blockOfCondition, matchedAcrossBlocks } from './lib/crossblock'
 import { auditBundle, comparisonKey, comparisonState, relevantExclusions } from './lib/contrast'
 import type { ComputedRun, OverlapQuery } from './lib/venn'
@@ -78,6 +78,8 @@ export default function App() {
    */
   const [sel, setSel] = useState<GroupSel>(emptySel)
   const [tab, setTab] = useState<Tab>('overview')
+  /** Shrinkage for runs performed HERE. Default none — the exporter's choice is its own. */
+  const [shrink, setShrink] = useState<Shrink>('none')
   const [gene, setGene] = useState<string | null>(null)
   // Held here, not in the tab, so switching tabs or comparisons never discards
   // a typed gene list.
@@ -401,7 +403,7 @@ export default function App() {
       const rows = await runDESeq2(
         { raw: bundle.rawCounts, samples: bundle.samples,
           numerator: sel.test, denominator: sel.control, excluded: sel.excluded,
-          scope,
+          scope, shrink,
           // From the NORMALIZED matrix: raw_counts.csv is often accession-only
           // while normalized_counts.csv carries the symbol column.
           geneNames: symbolOf }, log)
@@ -492,7 +494,7 @@ export default function App() {
         <ComparisonBar
           bundle={bundle} sel={sel} state={state}
           running={myRun.running} runLog={myRun.log}
-          onSel={pickSel} onRun={runPair}
+          onSel={pickSel} onRun={runPair} shrink={shrink} onShrink={setShrink}
           onCrossBlock={crossBlockReady ? () => setTab('crossblock') : undefined} />
       )}
 
