@@ -252,8 +252,8 @@ export default function App() {
   /* What can be said about the pair on screen — precomputed, computed here,
    * runnable, or not. One object, asked fresh whenever either side moves. */
   const state = useMemo(
-    () => (bundle ? comparisonState(bundle, sel.control, sel.test, sel.excluded, computed) : null),
-    [bundle, sel.control, sel.test, sel.excluded, computed])
+    () => (bundle ? comparisonState(bundle, sel.control, sel.test, sel.excluded, computed, shrink) : null),
+    [bundle, sel.control, sel.test, sel.excluded, computed, shrink])
 
   /* What the bundle got wrong, said once at the top rather than discovered as
    * an empty plot four tabs away. */
@@ -299,10 +299,16 @@ export default function App() {
     if (state.source === 'bundle' && state.contrast) {
       return { bundle, contrast: state.contrast, pending: false }
     }
+    // `comparisonState` already prefers a run performed here over the
+    // pipeline's table for the same pair, because the reader asked for it.
     // Both carry the exclusions, so a re-run with a different set of samples
     // is a different result rather than a cache hit on the previous one.
-    const key = comparisonKey(bundle, sel.control, sel.test, sel.excluded)
-    const id = `${computedContrastId(sel.test, sel.control)}${key.includes('|-') ? key.slice(key.indexOf('|-')) : ''}`
+    const key = comparisonKey(bundle, sel.control, sel.test, sel.excluded, shrink)
+    // The id carries whatever the key carries beyond the group names —
+    // exclusions and shrinkage — so two runs of one pair are two entries in
+    // degByContrast rather than one overwriting the other.
+    const suffix = key.slice(`${sel.test.join('+')}|${sel.control.join('+')}`.length)
+    const id = `${computedContrastId(sel.test, sel.control)}${suffix}`
     const rows = computed[key]
     const contrast: Contrast = {
       id, numerator: sideLabel(sel.test), denominator: sideLabel(sel.control),
@@ -319,7 +325,7 @@ export default function App() {
     // paint a different comparison's volcano and DEG table under this pair's
     // label — plausible numbers belonging to another question.
     return { bundle, contrast, pending: true }
-  }, [bundle, state, sel.control, sel.test, sel.excluded, computed])
+  }, [bundle, state, sel.control, sel.test, sel.excluded, computed, shrink])
 
   /* The gene-set library, owned here rather than by a tab.
    *
@@ -384,7 +390,7 @@ export default function App() {
     const may = state?.source === 'computable'
       || (state?.source === 'bundle' && state.canRun && (state.staleExclusions?.length ?? 0) > 0)
     if (!bundle?.rawCounts || !may) return
-    const pair = comparisonKey(bundle, sel.control, sel.test, sel.excluded)
+    const pair = comparisonKey(bundle, sel.control, sel.test, sel.excluded, shrink)
     setRun({ pair, running: true, log: '' })
     const log = (m: string) => setRun(r => (r.pair === pair ? { ...r, log: m } : r))
     try {
@@ -423,7 +429,7 @@ export default function App() {
   // True when the selected pair has no DESeq2 result yet.
   const pending = !!active?.pending
   /** The run's own pair, so one pair's failure never renders under another. */
-  const myRun = bundle && run.pair === comparisonKey(bundle, sel.control, sel.test, sel.excluded)
+  const myRun = bundle && run.pair === comparisonKey(bundle, sel.control, sel.test, sel.excluded, shrink)
     ? run : { running: false, log: '' }
 
   return (

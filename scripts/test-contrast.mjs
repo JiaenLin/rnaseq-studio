@@ -344,5 +344,58 @@ console.log('\nA CLEAN BUNDLE IS SILENT')
   check('the key is short enough to embed in R', hashCounts(a).length <= 13, true)
 }
 
+
+/* ------------------------------------------------------------------ *
+ * RE-RUNNING AN EXPORTED PAIR, AND THE KEY THAT KEEPS THEM APART.
+ *
+ * A pair the pipeline covered used to offer no run button, so there was
+ * no way to ask it again under a different shrinkage setting. Now there
+ * is — which makes the cache key load-bearing: if it ignored shrinkage,
+ * the second run would return the first one's numbers under the new
+ * label, silently.
+ * ------------------------------------------------------------------ */
+console.log('\nRE-RUN AND THE CACHE KEY')
+{
+  const b = {
+    meta: { conditions: ['WT', 'KO'], control: 'WT', shrinkage: 'none',
+      contrasts: [{ id: 'KO_vs_WT', numerator: 'KO', denominator: 'WT', label: 'KO vs WT', deg_file: 'd.csv' }] },
+    samples: [
+      { sample: 's1', condition: 'WT' }, { sample: 's2', condition: 'WT' },
+      { sample: 's3', condition: 'KO' }, { sample: 's4', condition: 'KO' },
+    ],
+    counts: { samples: ['s1', 's2', 's3', 's4'], geneIds: [], geneNames: [], values: new Float64Array(), index: new Map() },
+    rawCounts: { samples: ['s1', 's2', 's3', 's4'], geneIds: [], geneNames: [], values: new Float64Array(), index: new Map() },
+    degByContrast: { KO_vs_WT: [{ gene_id: 'g', gene_name: 'g', baseMean: 1, log2FoldChange: 1, lfcSE: 1, pvalue: 0.01, padj: 0.01 }] },
+    enrichmentByContrast: {},
+  }
+  const st = comparisonState(b, ['WT'], ['KO'], [], {})
+  check('an exported pair still reads as the pipeline\'s', st.source, 'bundle')
+  check('and is now re-runnable', st.canRun, true)
+
+  const noRaw = comparisonState({ ...b, rawCounts: undefined }, ['WT'], ['KO'], [], {})
+  check('but not without raw counts', noRaw.canRun, false)
+
+  const k0 = comparisonKey(b, ['WT'], ['KO'], [], 'none')
+  const k1 = comparisonKey(b, ['WT'], ['KO'], [], 'apeglm')
+  check('shrinkage changes the cache key', k0 === k1, false)
+  check('none leaves the key as it was', k0, comparisonKey(b, ['WT'], ['KO'], []))
+  check('and apeglm marks it', k1.endsWith('|~apeglm'), true)
+
+  // The failure this exists to stop: a run stored under one setting must not
+  // satisfy a request under the other.
+  const cached = { [k0]: [] }
+  check('a run without shrinkage is found again', comparisonState(b, ['WT'], ['KO'], [], cached, 'none').source, 'computed')
+  check('but does NOT satisfy an apeglm request',
+    comparisonState(b, ['WT'], ['KO'], [], cached, 'apeglm').source, 'bundle')
+  check('and the apeglm run is offered instead',
+    comparisonState(b, ['WT'], ['KO'], [], cached, 'apeglm').canRun, true)
+
+  // Exclusions and shrinkage must both survive in the key together.
+  const both = comparisonKey(b, ['WT'], ['KO'], ['s1'], 'apeglm')
+  check('exclusions and shrinkage coexist in the key',
+    both.includes('|-s1') && both.endsWith('|~apeglm'), true)
+}
+
 console.log(failed ?  `\n${failed} test(s) failed\n` : '\nAll contrast tests passed\n')
 process.exit(failed ? 1 : 0)
+

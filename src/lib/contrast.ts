@@ -121,10 +121,16 @@ export function relevantExclusions(
  */
 export function comparisonKey(
   bundle: Bundle, control: readonly string[], test: readonly string[], excluded: readonly string[],
+  shrink: string = 'none',
 ): string {
   const gone = relevantExclusions(bundle, control, test, excluded)
   return `${[...test].join('+')}|${[...control].join('+')}`
     + (gone.length ? `|-${gone.join(',')}` : '')
+    // SHRINKAGE IS PART OF THE ANSWER, so it is part of the key. Without it,
+    // re-running the same pair with apeglm after running it without would hit
+    // the cache and return the previous numbers under the new label — the exact
+    // failure the exclusions were added to this key to prevent.
+    + (shrink && shrink !== 'none' ? `|~${shrink}` : '')
 }
 
 export type Source = 'bundle' | 'computed' | 'computable' | 'unavailable' | 'cross-block'
@@ -167,10 +173,11 @@ export function comparisonState(
   test: readonly string[],
   excluded: readonly string[],
   computedKeys: Record<string, unknown>,
+  shrink: string = 'none',
 ): ComparisonState {
   const nControl = samplesInGroups(bundle.counts.samples, bundle.samples, control, excluded).length
   const nTest = samplesInGroups(bundle.counts.samples, bundle.samples, test, excluded).length
-  const key = comparisonKey(bundle, control, test, excluded)
+  const key = comparisonKey(bundle, control, test, excluded, shrink)
   const gone = relevantExclusions(bundle, control, test, excluded)
   const base = { nControl, nTest }
 
@@ -178,7 +185,21 @@ export function comparisonState(
     return { ...base, source: 'computed', contrast: null }
   }
   const pre = matchPrecomputed(bundle, control, test)
-  if (pre && !gone.length) return { ...base, source: 'bundle', contrast: pre, staleExclusions: [] }
+  if (pre && !gone.length) {
+    /**
+     * The pipeline's table for this pair — and it is still RE-RUNNABLE.
+     *
+     * It was not. A pair the exporter had covered offered no run button at all,
+     * so there was no way to ask the same question under a different shrinkage
+     * setting, or to check the bundle's numbers against a fresh fit. The table
+     * is what is SHOWN; being able to recompute it is a separate thing and
+     * there is no reason to withhold it when the raw counts are right there.
+     */
+    return {
+      ...base, source: 'bundle', contrast: pre, staleExclusions: [],
+      canRun: !!bundle.rawCounts && nControl >= MIN_REPLICATES && nTest >= MIN_REPLICATES,
+    }
+  }
 
   /**
    * A precomputed table exists, and does not describe this selection.

@@ -66,6 +66,16 @@ export interface BundleMeta {
    * from one fit per level, so no comparison ACROSS levels was ever fitted.
    */
   block_factor?: string | null
+  /**
+   * Which estimator `log2FoldChange` holds in this bundle's tables — 'none'
+   * for the maximum likelihood estimate, 'apeglm' for the shrunken posterior.
+   *
+   * Absent on bundles written before the exporter recorded it. Read only to
+   * TELL the reader what they are looking at: nothing here recomputes on it,
+   * and a re-run performed in this app is filed under its own id rather than
+   * replacing the table it was compared against.
+   */
+  shrinkage?: 'none' | 'apeglm' | string
 }
 
 export interface SampleRow {

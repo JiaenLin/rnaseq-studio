@@ -83,13 +83,22 @@ export default function ComparisonBar({
 
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <Provenance state={state} />
-          {state.source === 'computable' && (
+          {(state.source === 'computable' || state.canRun) && (
             <>
-              <button className="btn btn-primary py-1 text-xs" disabled={running} onClick={onRun}>
+              <button
+                className={`btn py-1 text-xs ${state.source === 'bundle' ? '' : 'btn-primary'}`}
+                disabled={running} onClick={onRun}>
                 {running ? 'Running DESeq2…'
-                  : state.hiddenPrecomputed
-                    ? 'Re-run without the excluded samples'
-                    : 'Run DESeq2 for this pair'}
+                  : state.source === 'bundle'
+                    // The pipeline already answered this pair. Re-running is for
+                    // asking it again under a different shrinkage setting, or
+                    // for checking the bundle's numbers against a fresh fit —
+                    // so the button says that rather than pretending nothing
+                    // exists yet.
+                    ? `Re-run here${shrink === 'none' ? ' (MLE)' : ' with apeglm'}`
+                    : state.hiddenPrecomputed
+                      ? 'Re-run without the excluded samples'
+                      : 'Run DESeq2 for this pair'}
               </button>
               {/* Shown beside the button because it changes what that button
                   produces. Two options and no more: ashr is not offered here or
@@ -131,6 +140,17 @@ export default function ComparisonBar({
             their shared effect rather than any one pairwise difference</>
         )}
       </p>
+
+      {state.source === 'bundle' && state.canRun && (
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          Showing your pipeline&rsquo;s table
+          {bundle.meta.shrinkage
+            ? <>, whose fold changes are <b>{bundle.meta.shrinkage === 'none'
+              ? 'the maximum likelihood estimate' : bundle.meta.shrinkage}</b></>
+            : null}. A re-run here is filed separately, so both stay available and the Overlap tab
+          can hold them side by side.
+        </p>
+      )}
 
       {state.source === 'unavailable' && state.blocked && (
         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">{state.blocked}</p>
