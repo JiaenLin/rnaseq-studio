@@ -38,6 +38,10 @@ function coerceDeg(rows: DEGRow[]): DEGRow[] {
     r.lfcSE = toNum(r.lfcSE)
     r.pvalue = toNum(r.pvalue)
     r.padj = toNum(r.padj)
+    // Absent on older bundles; left undefined rather than zero so
+    // lib/crossblock.ts can tell "no MLE here" from "an MLE of zero".
+    if (r.log2FoldChange_MLE !== undefined) r.log2FoldChange_MLE = toNum(r.log2FoldChange_MLE)
+    if (r.lfcSE_MLE !== undefined) r.lfcSE_MLE = toNum(r.lfcSE_MLE)
   }
   return rows
 }

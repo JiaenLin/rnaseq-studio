@@ -55,6 +55,17 @@ export interface BundleMeta {
   contrasts: Contrast[]
   n_genes?: number
   n_samples?: number
+  /**
+   * The covariate whose levels were fitted SEPARATELY, when the exporter
+   * blocked the run — tissue, cell line, cohort.
+   *
+   * Absent on every bundle written before blocking existed, and on every
+   * unblocked one, which is the common case: one fit spans every group and
+   * nothing in lib/crossblock.ts applies. When present it names a column in
+   * samples.csv, and it changes what the bundle means — the DEG tables come
+   * from one fit per level, so no comparison ACROSS levels was ever fitted.
+   */
+  block_factor?: string | null
 }
 
 export interface SampleRow {
@@ -68,10 +79,22 @@ export interface DEGRow {
   gene_id: string
   gene_name: string
   baseMean: number
+  /** Shrunk (ashr) when the exporter shrank it — what to display and threshold. */
   log2FoldChange: number
   lfcSE: number | null
   pvalue: number | null
   padj: number | null
+  /**
+   * The UNSHRUNK maximum-likelihood estimate and its standard error.
+   *
+   * Present only on bundles new enough to carry them. Needed for any comparison
+   * BETWEEN fits: ashr fits its prior per fit, so a block full of strong effects
+   * is shrunk less than a quiet one, and comparing shrunk values across blocks
+   * reads that difference in shrinkage as biology. Display the shrunk value;
+   * compare these.
+   */
+  log2FoldChange_MLE?: number | null
+  lfcSE_MLE?: number | null
 }
 
 // One row of an ORA or GSEA enrichment table (unified).

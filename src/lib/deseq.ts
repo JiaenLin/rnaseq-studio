@@ -226,6 +226,20 @@ export interface DeseqRequest {
   /** Sample names the reader has taken out of the analysis. */
   excluded?: readonly string[]
   /**
+   * The conditions this fit is allowed to span, when the bundle is blocked.
+   *
+   * Without it the cell-means fit below covers EVERY group the reader left in,
+   * which is right for the four-arm bundles this app was written for and wrong
+   * for a blocked one: the exporter fitted each tissue separately because
+   * DESeq2 has a single dispersion per gene, so re-running a within-tissue pair
+   * here over all eleven would answer with a different model from the one the
+   * bundle's own tables came from — and on 275 samples with 55 coefficients it
+   * would not finish in a browser either.
+   *
+   * Absent means "everything", which is what every unblocked bundle wants.
+   */
+  scope?: readonly string[]
+  /**
    * gene_id -> symbol, so a run performed here carries the same gene names the
    * pipeline's own tables do.
    *
@@ -256,7 +270,7 @@ export interface DeseqRequest {
  * does not fit one — the bundle's own exporter does.
  */
 export async function runDESeq2(
-  { raw, samples, numerator, denominator, excluded = [], geneNames }: DeseqRequest,
+  { raw, samples, numerator, denominator, excluded = [], geneNames, scope }: DeseqRequest,
   log: (m: string) => void,
 ): Promise<DEGRow[]> {
   const cond: Record<string, string> = {}
@@ -265,9 +279,10 @@ export async function runDESeq2(
 
   // EVERY sample the reader has left in goes to R, with its own group. The fit
   // spans all of them; the comparison is a contrast pulled out of it afterwards.
+  const inScope = scope && scope.length ? new Set(scope) : null
   const cols = raw.samples
     .map((s, j) => ({ s, j, c: cond[s] ?? '' }))
-    .filter(x => !out.has(x.s) && x.c)
+    .filter(x => !out.has(x.s) && x.c && (!inScope || inScope.has(x.c)))
 
   const sizeOf = new Map<string, number>()
   for (const c of cols) sizeOf.set(c.c, (sizeOf.get(c.c) ?? 0) + 1)
