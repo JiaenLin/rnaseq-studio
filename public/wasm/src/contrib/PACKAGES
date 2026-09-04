@@ -1,3 +1,13 @@
+Package: apeglm
+Version: 1.34.0
+Imports: emdbook, SummarizedExperiment, GenomicRanges, methods, stats,
+        utils, Rcpp
+LinkingTo: Rcpp, RcppEigen, RcppNumerical
+Suggests: DESeq2, airway, knitr, rmarkdown, testthat
+License: GPL-2
+MD5sum: 9f4076b39087a3e416a602f5a972fc42
+NeedsCompilation: yes
+
 Package: locfit
 Version: 1.5-9.12
 License: GPL-2
