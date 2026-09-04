@@ -69,8 +69,10 @@ async function ensureDESeq2(webR: any, log: (m: string) => void) {
  * of them matched what rnaseq-lab had put in the bundle. Fit once, cache it,
  * extract.
  *
- * The fit is cached in the R session under a key covering the matrix and which
- * samples are in it — the two things that change it. Group choice does not.
+ * The fit is cached in the R session under a key covering the COUNTS THEMSELVES
+ * (hashed) and which samples are in it — the two things that change it. Group
+ * choice does not. The session outlives the bundle, so hashing the counts is
+ * what stops a second bundle of the same shape inheriting the first one's fit.
  *
  * THE GENE FILTER moves padj, which is worth saying plainly rather than
  * burying: fewer genes enter the Benjamini-Hochberg correction, so adjusted
@@ -187,6 +189,33 @@ export function contrastWeights(
   ]
 }
 
+/**
+ * A 53-bit hash of the exact counts R is about to be given (cyrb53).
+ *
+ * The fit is cached in the R SESSION, which outlives the bundle: opening a
+ * second bundle does not reset it. So the cache key has to identify the DATA,
+ * not merely its shape. It used to be [gene count, sample names, group
+ * labels] — and not one of those changes when a reader opens a re-exported or
+ * corrected version of the same experiment, which is exactly the case the data
+ * space made ordinary. Measured on two bundles differing 8-fold on 2,000
+ * genes: the second returned the first's table for all 17,720 rows, byte for
+ * byte, in 2 s instead of 40. A wrong answer that arrives fast and looks
+ * plausible is the worst kind, so the key now covers every count.
+ *
+ * Hashing 1.4 MB costs about 5 ms, against a 40 s fit.
+ */
+export function hashCounts(text: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
 export interface DeseqRequest {
   raw: CountsMatrix
   samples: SampleRow[]
@@ -277,8 +306,9 @@ export async function runDESeq2(
 
   try { await webR.FS.mkdir('/work') } catch { /* exists */ }
   const enc = new TextEncoder()
-  const key = JSON.stringify([raw.geneIds.length, cols.map(c => c.s), cols.map(c => c.c)])
-  await webR.FS.writeFile('/work/counts.csv', enc.encode(lines.join('\n') + '\n'))
+  const countsCsv = lines.join('\n') + '\n'
+  const key = JSON.stringify([hashCounts(countsCsv), cols.map(c => c.s), cols.map(c => c.c)])
+  await webR.FS.writeFile('/work/counts.csv', enc.encode(countsCsv))
   await webR.FS.writeFile('/work/coldata.csv', enc.encode(coldata))
   await webR.FS.writeFile('/work/contrast.csv', enc.encode('level,weight\n' + wRows.join('\n') + '\n'))
 

@@ -7,7 +7,7 @@
 
 import { auditBundle, comparisonKey, comparisonState, conditionSizes, matchPrecomputed, relevantExclusions }
   from '../src/lib/contrast.ts'
-import { contrastWeights } from '../src/lib/deseq.ts'
+import { contrastWeights, hashCounts } from '../src/lib/deseq.ts'
 
 let failed = 0
 const check = (name, got, want) => {
@@ -320,6 +320,28 @@ console.log('\nA CLEAN BUNDLE IS SILENT')
   let threw = false
   try { contrastWeights(['A'], ['Z'], sz) } catch { threw = true }
   check('a side with no samples is refused, not silently zero', threw, true)
+}
+
+{
+  // THE FIT CACHE MUST KEY ON THE COUNTS.
+  //
+  // The R session outlives the bundle, so a key made of gene count + sample
+  // names + group labels matched a DIFFERENT dataset of the same shape and
+  // handed it the previous fit — silently, and in 2 s rather than 40. These
+  // are the shapes that used to collide.
+  console.log('\nTHE FIT CACHE KEYS ON THE DATA, NOT ITS SHAPE')
+  const head = 'gene_id,"WT_1","WT_2","KO_1","KO_2"'
+  const a = `${head}\nENSMUSG00000000001,10,12,90,88\nENSMUSG00000000003,5,6,7,8\n`
+  const b = `${head}\nENSMUSG00000000001,10,12,90,88\nENSMUSG00000000003,5,6,7,9\n`
+  check('the same counts hash the same', hashCounts(a), hashCounts(a))
+  check('one count different is a different key', hashCounts(a) !== hashCounts(b), true)
+  // same shape, same samples, same genes — only the numbers moved
+  const scaled = a.replace(/,90,88/, ',720,704')
+  check('an 8x change on one gene is a different key', hashCounts(a) !== hashCounts(scaled), true)
+  // and order matters: the same numbers against different samples is other data
+  const swapped = `${head}\nENSMUSG00000000003,5,6,7,8\nENSMUSG00000000001,10,12,90,88\n`
+  check('reordered rows are a different key', hashCounts(a) !== hashCounts(swapped), true)
+  check('the key is short enough to embed in R', hashCounts(a).length <= 13, true)
 }
 
 console.log(failed ?  `\n${failed} test(s) failed\n` : '\nAll contrast tests passed\n')
