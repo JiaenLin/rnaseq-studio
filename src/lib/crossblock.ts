@@ -29,8 +29,9 @@
 //      source paper for that atlas merged them into one colour; this does not.
 //
 // ON THE UNSHRUNK ESTIMATE. The test uses log2FoldChange_MLE and lfcSE_MLE, not
-// the shrunk values. ashr fits its prior per fit, so a block full of strong
-// effects is shrunk less than a quiet one — measured across the eleven tissues,
+// the shrunk values. A shrinkage prior is fitted per fit, so a block full of
+// strong effects is shrunk by a different amount from a quiet one — measured
+// with ashr across the eleven tissues (before it was dropped for apeglm),
 // the fraction of significant genes surviving |log2FC| >= 1 ranges from 0.32 in
 // hypothalamus to 0.72 in eWAT. Comparing shrunk values between blocks reads
 // that difference in shrinkage as biology, and would roughly double the

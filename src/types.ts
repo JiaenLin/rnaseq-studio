@@ -79,7 +79,7 @@ export interface DEGRow {
   gene_id: string
   gene_name: string
   baseMean: number
-  /** Shrunk (ashr) when the exporter shrank it — what to display and threshold. */
+  /** Shrunk (apeglm) when the exporter shrank it, else the MLE. What to display. */
   log2FoldChange: number
   lfcSE: number | null
   pvalue: number | null
@@ -88,10 +88,11 @@ export interface DEGRow {
    * The UNSHRUNK maximum-likelihood estimate and its standard error.
    *
    * Present only on bundles new enough to carry them. Needed for any comparison
-   * BETWEEN fits: ashr fits its prior per fit, so a block full of strong effects
-   * is shrunk less than a quiet one, and comparing shrunk values across blocks
-   * reads that difference in shrinkage as biology. Display the shrunk value;
-   * compare these.
+   * BETWEEN fits: a shrinkage prior is fitted per fit, so a block full of strong
+   * effects is shrunk by a different amount from a quiet one, and comparing
+   * shrunk values across blocks reads that difference as biology. Display the
+   * shrunk value; compare these. When the exporter shrank nothing these equal
+   * log2FoldChange, which is harmless — the comparison is then like for like.
    */
   log2FoldChange_MLE?: number | null
   lfcSE_MLE?: number | null

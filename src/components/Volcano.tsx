@@ -24,8 +24,8 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
    *
    * `lfc_threshold` is a default the exporter stamps on every contrast — the
    * constant 1 — not something measured from the data. On a contrast whose
-   * effects are all modest it can exclude the entire result: ashr shrinks small
-   * effects hardest, and the ageing atlas has a hypothalamus comparison with
+   * effects are all modest it can exclude the entire result: shrinkage pulls
+   * small effects hardest, and the ageing atlas has a hypothalamus comparison with
    * 1,231 genes at padj < 0.05 and not one above |log2FC| = 1. The volcano then
    * opens with every point grey, which reads as "nothing happened here" when
    * what happened is that a default from elsewhere excluded all of it.

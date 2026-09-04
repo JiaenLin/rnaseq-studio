@@ -27,8 +27,12 @@ export default function CrossBlock({ bundle }: { bundle: Bundle }) {
   const keys = useMemo(() => [...matched.keys()], [matched])
 
   const [question, setQuestion] = useState(keys[0] ?? '')
-  const active = matched.get(question) ?? matched.get(keys[0] ?? '') ?? []
-  const blocks = active.map(m => m.block)
+  // Memoised because `cmp` depends on it: a fresh array every render would
+  // recompute the whole comparison on every keystroke elsewhere in the page.
+  const active = useMemo(
+    () => matched.get(question) ?? matched.get(keys[0] ?? '') ?? [],
+    [matched, question, keys])
+  const blocks = useMemo(() => active.map(m => m.block), [active])
 
   const [aBlock, setABlock] = useState('')
   const [bBlock, setBBlock] = useState('')

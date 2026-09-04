@@ -45,8 +45,8 @@ async function getWebR(log: (m: string) => void): Promise<any> {
  */
 async function ensureDESeq2(webR: any, log: (m: string) => void) {
   if (installed) return
-  log('Installing DESeq2 + ashr… (first run downloads ~tens of MB, then cached)')
-  await webR.installPackages(['DESeq2', 'ashr'], {
+  log('Installing DESeq2… (first run downloads ~tens of MB, then cached)')
+  await webR.installPackages(['DESeq2'], {
     repos: [locfitRepo(), 'https://bioc.r-universe.dev', 'https://repo.r-wasm.org'],
   })
   installed = true
@@ -146,21 +146,32 @@ const EXTRACT_R = `local({
         else rowMeans(sweep(counts(dds)[, inC, drop = FALSE], 2, sf[inC], "/"))
 
   res <- results(dds, contrast = cv, filter = bm)
-  # Shrink the fold changes: the raw MLE is inflated for low-count genes, which
-  # is why DESeq2 puts lfcShrink beside results() in its own quickstart. apeglm
-  # cannot take a contrast vector and normal refuses a design with no
-  # intercept, so ashr is the one that fits a cell-means fit. Passing res keeps
-  # the p-values and the per-comparison padj from just above.
-  sh <- tryCatch(suppressMessages(
-          lfcShrink(dds, contrast = cv, type = "ashr", res = res)),
-        error = function(e) NULL)
-  shrunk <- !is.null(sh)
-  if (shrunk) res <- sh
+
+  # NO SHRINKAGE HERE. The fold change is the maximum likelihood estimate, and
+  # lfcSE beside it says how much to believe it.
+  #
+  # ashr was here and is gone. Measured over the 110 tables of an 11-tissue
+  # ageing atlas it failed in both directions at once: it shrank well-measured
+  # significant effects to 0.67 of their MLE, and left 287 genes carrying
+  # |log2FC| > 5 — up to 25.4, a 44-million-fold change — because those are
+  # genes with zero counts in one group, where the estimate is unbounded and a
+  # normal-mixture prior cannot pull it back. None of its settings moved either
+  # number.
+  #
+  # apeglm is the one estimator worth having and it cannot run here: it needs a
+  # COEFFICIENT rather than a contrast vector, which a cell-means design has
+  # none of, and there is no WebAssembly build of it published anywhere —
+  # repo.r-wasm.org carries ashr but not apeglm. RNA-seq Lab offers it because
+  # it builds the binary itself; a re-run in this app reports the MLE and says
+  # so, rather than quietly using a different estimator from the bundle it sits
+  # beside.
   write.csv(data.frame(gene_id = rownames(res), gene_name = rownames(res),
             baseMean = round(bm, 3), log2FoldChange = round(res$log2FoldChange, 5),
-            lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj),
+            lfcSE = round(res$lfcSE, 5), pvalue = res$pvalue, padj = res$padj,
+            log2FoldChange_MLE = round(res$log2FoldChange, 5),
+            lfcSE_MLE = round(res$lfcSE, 5)),
             "/work/deg.csv", row.names = FALSE)
-  sprintf("%d|%s", sum(res$padj < 0.05, na.rm = TRUE), if (shrunk) "ashr" else "raw")
+  sprintf("%d|%s", sum(res$padj < 0.05, na.rm = TRUE), "mle")
 })`
 
 /**
@@ -337,7 +348,9 @@ export async function runDESeq2(
   const [nDeg, shrink] = (await webR.evalRString(EXTRACT_R)).split('|')
   const csv = new TextDecoder().decode(await webR.FS.readFile('/work/deg.csv'))
   log(`Done — ${nDeg} genes at padj < 0.05`
-    + (shrink === 'ashr' ? ', fold changes shrunk (ashr).' : '. Shrinkage unavailable — raw MLE fold changes.'))
+    + (shrink === 'mle'
+      ? '. Fold changes are the maximum likelihood estimate — check lfcSE before trusting a large one.'
+      : '.'))
   return withSymbols(parseDegCsv(csv), geneNames ?? namesOf(raw))
 }
 

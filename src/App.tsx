@@ -317,7 +317,7 @@ export default function App() {
     // paint a different comparison's volcano and DEG table under this pair's
     // label — plausible numbers belonging to another question.
     return { bundle, contrast, pending: true }
-  }, [bundle, state, sel.control, sel.test, computed])
+  }, [bundle, state, sel.control, sel.test, sel.excluded, computed])
 
   /* The gene-set library, owned here rather than by a tab.
    *
