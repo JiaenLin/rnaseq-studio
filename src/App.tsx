@@ -3,6 +3,7 @@ import type { Bundle, Contrast, DEGRow } from './types'
 import type { GroupSel } from './lib/design'
 import { defaultSelection, emptySel, openingContrast, sideLabel } from './lib/design'
 import { computedContrastId, countSignificant, runDESeq2 } from './lib/deseq'
+import { blockOfCondition, matchedAcrossBlocks } from './lib/crossblock'
 import { auditBundle, comparisonKey, comparisonState, relevantExclusions } from './lib/contrast'
 import type { ComputedRun, OverlapQuery } from './lib/venn'
 import { overlapSources } from './lib/venn'
@@ -17,6 +18,7 @@ import GeneExpression from './components/GeneExpression'
 import GeneSetExplorer from './components/GeneSetExplorer'
 import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
+import CrossBlock from './components/CrossBlock'
 import Overlap from './components/Overlap'
 import Enrichment from './components/Enrichment'
 import Methods from './components/Methods'
@@ -30,7 +32,7 @@ const LAB_URL = 'https://jiaenlin.github.io/rnaseq-lab/'
 const SERVICE_URL = 'https://jiaenlin.github.io/rnaseq-service/'
 const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
 
-type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'overlap' | 'enrichment' | 'geneset' | 'methods'
+type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'overlap' | 'crossblock' | 'enrichment' | 'geneset' | 'methods'
 // Ordered the way results are read: what the dataset is, then the statistics,
 // then the pathway view, then drilling into genes, then writing it up.
 const TABS: { id: Tab; label: string }[] = [
@@ -41,6 +43,10 @@ const TABS: { id: Tab; label: string }[] = [
   // where the question arises: you have read one gene list and want to know
   // what it shares with the next one.
   { id: 'overlap', label: 'Overlap' },
+  // Only on a blocked bundle — see `visibleTabs`. Beside Overlap because it is
+  // the same act one level up: Overlap compares two gene lists, this compares
+  // the same comparison asked in two places.
+  { id: 'crossblock', label: 'Across blocks' },
   { id: 'enrichment', label: 'Enrichment' },
   { id: 'expression', label: 'Gene expression' },
   { id: 'geneset', label: 'Gene sets' },
@@ -251,6 +257,20 @@ export default function App() {
    * an empty plot four tabs away. */
   const problems = useMemo(() => (bundle ? auditBundle(bundle) : []), [bundle])
 
+  /**
+   * "Across blocks" only exists for a bundle that HAS blocks.
+   *
+   * On an unblocked bundle every comparison lives in one fit and the tab would
+   * be a permanently empty page explaining why it is empty — worse than not
+   * being there. Hidden rather than disabled for the same reason.
+   */
+  const crossBlockReady = useMemo(
+    () => !!bundle?.meta.block_factor && matchedAcrossBlocks(bundle).size > 0,
+    [bundle])
+  const visibleTabs = useMemo(
+    () => TABS.filter(t => t.id !== 'crossblock' || crossBlockReady),
+    [crossBlockReady])
+
   /* Every differential-expression table this session can put in a Venn: the
    * ones the pipeline exported and the ones DESeq2 was run for here.
    *
@@ -366,9 +386,22 @@ export default function App() {
     setRun({ pair, running: true, log: '' })
     const log = (m: string) => setRun(r => (r.pair === pair ? { ...r, log: m } : r))
     try {
+      /**
+       * On a blocked bundle the fit spans ONE block — the same one the
+       * exporter used. Both sides are in it (a cross-block pair never reaches
+       * here; comparisonState routes those away), so the block is read off
+       * either side.
+       */
+      const blockOf = blockOfCondition(bundle)
+      const myBlock = blockOf.get(sel.test[0]) ?? blockOf.get(sel.control[0])
+      const scope = myBlock
+        ? bundle.meta.conditions.filter(c => blockOf.get(c) === myBlock)
+        : undefined
+
       const rows = await runDESeq2(
         { raw: bundle.rawCounts, samples: bundle.samples,
           numerator: sel.test, denominator: sel.control, excluded: sel.excluded,
+          scope,
           // From the NORMALIZED matrix: raw_counts.csv is often accession-only
           // while normalized_counts.csv carries the symbol column.
           geneNames: symbolOf }, log)
@@ -459,7 +492,8 @@ export default function App() {
         <ComparisonBar
           bundle={bundle} sel={sel} state={state}
           running={myRun.running} runLog={myRun.log}
-          onSel={pickSel} onRun={runPair} />
+          onSel={pickSel} onRun={runPair}
+          onCrossBlock={crossBlockReady ? () => setTab('crossblock') : undefined} />
       )}
 
       {symbols && (
@@ -490,7 +524,7 @@ export default function App() {
 
       {bundle && (
         <nav className="flex flex-wrap gap-1 border-b border-slate-200 pb-2 dark:border-slate-700">
-          {TABS.map(t => (
+          {visibleTabs.map(t => (
             <button key={t.id} className={`tab ${tab === t.id ? 'tab-active' : ''}`} onClick={() => setTab(t.id)}>
               {t.label}
             </button>
@@ -532,6 +566,7 @@ export default function App() {
             {/* Neither is Overlap: it reads every comparison that has a result,
                 not the one selected above, so a pair still waiting on DESeq2
                 must not blank it. */}
+            {tab === 'crossblock' && <CrossBlock bundle={viewBundle!} />}
             {tab === 'overlap' && (
               <Overlap sources={overlapCatalog} canCompute={!!bundle.rawCounts}
                 library={library} onEnrich={enrichQuery} onSelectGene={pickGene} />
@@ -548,7 +583,7 @@ export default function App() {
                 query={geneQuery} onClearQuery={() => setGeneQuery(null)}
                 onSelectGene={pickGene} />
             )}
-            {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap'
+            {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap' && tab !== 'crossblock'
               && !(tab === 'enrichment' && geneQuery) && pending && (
               <NeedsStats
                 contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}

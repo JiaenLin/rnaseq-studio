@@ -33,6 +33,7 @@
 
 import type { Bundle, Contrast, SampleRow } from '../types'
 import { samplesInGroups } from './design.ts'
+import { blockOfCondition, spansBlocks } from './crossblock.ts'
 
 /**
  * Sample counts per condition, from samples.csv intersected with the matrix,
@@ -126,7 +127,7 @@ export function comparisonKey(
     + (gone.length ? `|-${gone.join(',')}` : '')
 }
 
-export type Source = 'bundle' | 'computed' | 'computable' | 'unavailable'
+export type Source = 'bundle' | 'computed' | 'computable' | 'unavailable' | 'cross-block'
 
 export interface ComparisonState {
   source: Source
@@ -217,6 +218,25 @@ export function comparisonState(
   if (control.some(c => test.includes(c))) {
     return { ...base, source: 'unavailable', contrast: null,
       blocked: 'The same group is on both sides, which is not a comparison.' }
+  }
+  /**
+   * The two sides sit in different blocks.
+   *
+   * Not an error, and NOT something to run. The bundle was fitted one block at
+   * a time precisely because a model spanning them is not defensible — one
+   * dispersion per gene across tissues, and a median-of-ratios reference built
+   * from samples that share almost no expressed genes. Falling through to
+   * `computable` here would have DESeq2 fit all of them together in the browser,
+   * which is both the wrong model and, on an eleven-tissue matrix, one that
+   * would not finish.
+   *
+   * So this is a distinct state rather than a refusal. The question it
+   * represents is a good one; it is answered by comparing the two blocks'
+   * RESPONSES, which lib/crossblock.ts computes without any model spanning
+   * them. The bar says so and points at the tab that does it.
+   */
+  if (spansBlocks(blockOfCondition(bundle), control, test)) {
+    return { ...base, source: 'cross-block', contrast: null, canRun: false }
   }
   if (!bundle.rawCounts) {
     return { ...base, source: 'unavailable', contrast: null,

@@ -21,7 +21,7 @@ import { moveItem } from '../lib/order'
  * Both are DESeq2; neither is a lesser answer.
  */
 export default function ComparisonBar({
-  bundle, sel, state, running, runLog, onSel, onRun,
+  bundle, sel, state, running, runLog, onSel, onRun, onCrossBlock,
 }: {
   bundle: Bundle
   sel: GroupSel
@@ -31,6 +31,8 @@ export default function ComparisonBar({
   runLog: string
   onSel: (next: GroupSel) => void
   onRun: () => void
+  /** Take the reader to the view that DOES answer a cross-block question. */
+  onCrossBlock?: () => void
 }) {
   // After exclusions, so a chip can never disagree with the summary line below it.
   const sizes = conditionSizes(bundle, sel.excluded)
@@ -112,6 +114,25 @@ export default function ComparisonBar({
 
       {state.source === 'unavailable' && state.blocked && (
         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">{state.blocked}</p>
+      )}
+
+      {/* NOT a refusal. The pair spans two fits, so no contrast exists for it
+          and none can be run — but the question behind it is answerable, and
+          saying only "unavailable" would leave the reader thinking the app had
+          run out of road when it has a whole tab for this. */}
+      {state.source === 'cross-block' && (
+        <p className="mt-1.5 text-xs leading-relaxed text-indigo-700 dark:text-indigo-300">
+          These two groups are in different <b>{bundle.meta.block_factor}</b> levels, which were
+          fitted separately — so no single model compares them, and running one here would pool a
+          dispersion across samples that are not comparable. What you can ask is whether the two
+          respond the <b>same way</b>: put the same comparison side by side in each and test the
+          difference between the fold changes.
+          {onCrossBlock && (
+            <button className="btn btn-primary ml-2 py-0.5 text-xs" onClick={onCrossBlock}>
+              Compare across blocks
+            </button>
+          )}
+        </p>
       )}
 
       {/* A precomputed table came from the pipeline's own run, over the samples
@@ -234,6 +255,13 @@ function GroupRow({ all, sizes, sideOf, want, onPut }: {
 
 function Provenance({ state }: { state: ComparisonState }) {
   const n = state.contrast?.n_deg
+  if (state.source === 'cross-block') {
+    // "no result" would be a lie by omission: there is no CONTRAST, but there
+    // is an answer, one tab away.
+    return <span className="pill bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-200">
+      across blocks
+    </span>
+  }
   if (state.source === 'unavailable') {
     return <span className="pill bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
       no result
