@@ -163,11 +163,23 @@ console.log('\nDESeq2 CONTRAST HELPERS')
     { gene_id: 'B', gene_name: 'B', baseMean: 10, log2FoldChange: 0.2, lfcSE: null, pvalue: 0.5, padj: 0.8 },
     { gene_id: 'C', gene_name: 'C', baseMean: 10, log2FoldChange: -3.0, lfcSE: null, pvalue: 1e-8, padj: 1e-6 },
     { gene_id: 'D', gene_name: 'D', baseMean: 10, log2FoldChange: 4.0, lfcSE: null, pvalue: null, padj: null },
+    // The case the exporter and the browser used to disagree about: strong
+    // evidence, modest effect. ashr shrinks these hardest, and on a quiet
+    // contrast they are ALL of the result — the ageing atlas has a hypothalamus
+    // comparison with 1,231 such genes and none above |log2FC| = 1.
+    { gene_id: 'E', gene_name: 'E', baseMean: 10, log2FoldChange: 0.4, lfcSE: null, pvalue: 1e-7, padj: 1e-5 },
   ]
-  check('significant genes are counted in both directions', countSignificant(rows), 2)
+  check('significant genes are counted in both directions', countSignificant(rows), 3)
+  check('a strong, modest-effect gene counts — the exporter counts it too',
+    countSignificant([rows[4]]), 1)
   check('a large fold change with no padj does not count',
     countSignificant([rows[3]]), 0)
+  check('a fold-change floor still applies when one is asked for',
+    countSignificant(rows, 0.05, 1), 2)
   check('thresholds are respected', countSignificant(rows, 1e-5, 1), 1)
+  // The whole point: this is what `sum(padj < 0.05)` in the exporter's R gives.
+  check('the default matches the exporter\'s rule exactly',
+    countSignificant(rows), rows.filter(r => r.padj != null && r.padj < 0.05).length)
 }
 
 console.log('\nTHE PAIR A BUNDLE OPENS ON')

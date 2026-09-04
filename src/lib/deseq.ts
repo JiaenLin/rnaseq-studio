@@ -406,6 +406,25 @@ export const computedContrastId = (numerator: readonly string[], denominator: re
 
 export const isComputedContrast = (id: string) => id.startsWith('~deseq2:')
 
-export const countSignificant = (rows: DEGRow[], padjMax = 0.05, lfcMin = 1) =>
+/**
+ * The DEG count on the comparison bar — and it must mean the SAME THING
+ * whether the table came from the pipeline or was run here.
+ *
+ * It did not. This counted `padj < 0.05 AND |log2FC| >= 1`, while the exporter
+ * writes `n_deg` from `sum(padj < 0.05)` with no fold-change criterion at all.
+ * Both numbers appear in the same badge, in the same place, for the same
+ * comparison — so re-running a pair in the browser could change the count
+ * without changing a single p-value.
+ *
+ * The gap is widest exactly where it misleads most. On a quiet contrast whose
+ * effects are all modest, ashr shrinks the estimates toward zero and almost
+ * nothing clears |log2FC| >= 1: the ageing atlas has a hypothalamus comparison
+ * with 1,231 genes at padj < 0.05 and none at all above 1. The pipeline's table
+ * badges 1,231; a re-run here badged 0, and nothing on screen explained why.
+ *
+ * So `lfcMin` now defaults to 0 — padj alone, the exporter's rule. A caller
+ * that wants a fold-change floor still passes one; nothing infers it silently.
+ */
+export const countSignificant = (rows: DEGRow[], padjMax = 0.05, lfcMin = 0) =>
   rows.reduce((a, r) =>
     a + (r.padj != null && r.padj < padjMax && Math.abs(r.log2FoldChange) >= lfcMin ? 1 : 0), 0)

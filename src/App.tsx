@@ -305,7 +305,7 @@ export default function App() {
     const contrast: Contrast = {
       id, numerator: sideLabel(sel.test), denominator: sideLabel(sel.control),
       label, deg_file: '',
-      n_deg: rows ? countSignificant(rows) : undefined,
+      n_deg: rows ? countSignificant(rows, state.contrast?.padj_threshold ?? 0.05) : undefined,
     }
     if (rows) {
       return {

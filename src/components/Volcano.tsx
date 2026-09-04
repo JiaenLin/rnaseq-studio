@@ -19,6 +19,26 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
   const padjThr = Math.pow(10, -negLogThr)
   const [lfcThr, setLfcThr] = useState(contrast.lfc_threshold ?? 1)
 
+  /**
+   * How many genes pass padj but are held back only by the fold-change floor.
+   *
+   * `lfc_threshold` is a default the exporter stamps on every contrast — the
+   * constant 1 — not something measured from the data. On a contrast whose
+   * effects are all modest it can exclude the entire result: ashr shrinks small
+   * effects hardest, and the ageing atlas has a hypothalamus comparison with
+   * 1,231 genes at padj < 0.05 and not one above |log2FC| = 1. The volcano then
+   * opens with every point grey, which reads as "nothing happened here" when
+   * what happened is that a default from elsewhere excluded all of it.
+   */
+  const heldByLfc = useMemo(
+    () => rows.filter(r => r.padj != null && r.padj < padjThr
+      && Math.abs(r.log2FoldChange) < lfcThr).length,
+    [rows, padjThr, lfcThr])
+  const nHighlighted = useMemo(
+    () => rows.filter(r => r.padj != null && r.padj < padjThr
+      && Math.abs(r.log2FoldChange) >= lfcThr).length,
+    [rows, padjThr, lfcThr])
+
   // These are the significance cutoffs a manuscript reports — hand them to the
   // Methods tab so it never has to guess.
   useReport(() => reportDe({ padjThr, lfcThr }), `${padjThr}|${lfcThr}`)
@@ -75,6 +95,18 @@ export default function Volcano({ bundle, contrast, onSelectGene }: Props) {
 
   return (
     <div className="card p-4">
+      {/* Nothing is marked, and the reason is a default rather than the data.
+          Said here because the alternative is a grey plot that looks like a
+          null result — and the fix is one drag of the slider below. */}
+      {nHighlighted === 0 && heldByLfc > 0 && (
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <b>{heldByLfc.toLocaleString()} genes pass padj &lt; {padjThr.toPrecision(2)} but none clear
+          |log2FC| ≥ {lfcThr}</b>, so nothing is highlighted. That floor is a default the exporter
+          stamps on every comparison, not something measured here — and shrinkage pulls modest
+          effects hardest, so a real but small response can be excluded entirely by it. Lower
+          |log2FC| below to see the result.
+        </p>
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-4 text-sm">
         <span className="pill bg-red-100 text-red-700">▲ {nUp} up in {contrast.numerator}</span>
         <span className="pill bg-blue-100 text-blue-700">▼ {nDown} up in {contrast.denominator}</span>
