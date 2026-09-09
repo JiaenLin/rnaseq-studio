@@ -43,7 +43,8 @@ export interface Contrast {
 }
 
 export interface BundleMeta {
-  schema: 1
+  /** 1 for a gene-only bundle; 2 exactly when `transcript_layer` is present. */
+  schema: 1 | 2
   project: string
   species: string
   created: string                 // ISO date
@@ -76,6 +77,97 @@ export interface BundleMeta {
    * replacing the table it was compared against.
    */
   shrinkage?: 'none' | 'apeglm' | string
+  /**
+   * How the library was sequenced. Absent on every schema-v1 bundle, which is
+   * how the app tells a gene-only bundle from one carrying an isoform layer
+   * without opening a single other file.
+   */
+  platform?: 'short-read' | 'long-read' | string
+  /** Present only on long-read bundles. See `TranscriptLayer`. */
+  transcript_layer?: TranscriptLayer | null
+  /**
+   * Per-sample long-read QC, when the pipeline measured it.
+   *
+   * REPORTED, NEVER ENFORCED. Nothing in this app filters a sample, hides a
+   * result, or refuses a run on the basis of any number here. A heart library
+   * that is 90% mitochondrial may be a degraded prep or may be heart; this app
+   * is not in a position to know which, and a threshold would be this app
+   * asserting an answer it does not have.
+   */
+  longread_qc?: LongReadQC[] | null
+}
+
+/** What a long-read bundle adds. Every field additive; nothing here replaces the gene layer. */
+export interface TranscriptLayer {
+  annotation: string              // "transcripts.csv"
+  counts: string                  // "transcript_counts.csv"
+  n_transcripts: number
+  n_novel: number
+  /** contrast id -> "dte_<id>.csv"; transcript-level DESeq2. */
+  dte_files: Record<string, string>
+  /** contrast id -> "dtu_<id>.csv"; differential transcript USAGE. */
+  dtu_files: Record<string, string>
+  /** Named because a different engine's numbers are not comparable. */
+  dtu_engine?: string
+  dtu_filter?: string
+  /**
+   * Which vocabulary `structural_category` in transcripts.csv speaks.
+   *
+   * 'bambu' is that tool's own class strings (`newWithin`,
+   * `newLastJunction:newJunction:newLastExon`); 'sqanti' is SQANTI3's
+   * categories (`full-splice_match`, `novel_in_catalog`); 'mixed' is a partial
+   * join and is a real answer. Absent means the writer did not record it —
+   * then the categories are shown but not named as either.
+   */
+  category_vocabulary?: 'bambu' | 'sqanti' | 'mixed' | 'none' | string
+  /** How the transcript-level DESeq2 was fitted; it does not reconcile with the gene layer. */
+  dte_fit?: string
+}
+
+/** One row of transcripts.csv. */
+export interface TranscriptRow {
+  transcript_id: string
+  gene_id: string
+  gene_name: string
+  transcript_name: string
+  /**
+   * What to SHOW. `Nppb-201` for an annotated model, `Nppb-novel-1` for a novel
+   * isoform of a known gene, the accession when there is nothing better.
+   * The accession is never lost — it stays the key of every table.
+   */
+  display_name: string
+  /** SQANTI3: full-splice_match, novel_in_catalog, novel_not_in_catalog, … */
+  structural_category: string
+  novel: boolean
+}
+
+/** One row of a dtu_<contrast>.csv. */
+export interface DTURow {
+  transcript_id: string
+  gene_id: string
+  /** Change in this isoform's SHARE of its gene, not in its absolute level. */
+  usage_log2FC: number | null
+  pvalue: number | null
+  padj: number | null
+  /** The gene's own q-value across all its isoforms. */
+  gene_padj: number | null
+  /** Observed mean share in each group, written by the engine that did the test. */
+  mean_usage_num: number | null
+  mean_usage_den: number | null
+}
+
+/** One sample's long-read QC. Every field optional; pipelines differ. */
+export interface LongReadQC {
+  sample: string
+  total_reads?: number | null
+  unmapped_pct?: number | null
+  mt_pct?: number | null
+  rrna_pct?: number | null
+  nuclear_alignments?: number | null
+  median_read_length?: number | null
+  read_n50?: number | null
+  median_polya?: number | null
+  transcripts_detected?: number | null
 }
 
 export interface SampleRow {
@@ -145,6 +237,13 @@ export interface Bundle {
    */
   rawCounts?: CountsMatrix
   degByContrast: Record<string, DEGRow[]>
+  /** The isoform layer, when the bundle carries one. Absent is the common case. */
+  transcripts?: TranscriptRow[]
+  transcriptCounts?: CountsMatrix
+  /** contrast id -> transcript-level DESeq2 rows (same shape as a DEG table). */
+  dteByContrast?: Record<string, DEGRow[]>
+  /** contrast id -> usage rows. */
+  dtuByContrast?: Record<string, DTURow[]>
   enrichmentByContrast: Record<string, EnrichmentRow[]>
   genesets?: GeneSetDef[]
 }

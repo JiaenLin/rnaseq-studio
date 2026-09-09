@@ -20,6 +20,8 @@ import Volcano from './components/Volcano'
 import DEGTable from './components/DEGTable'
 import CrossBlock from './components/CrossBlock'
 import Overlap from './components/Overlap'
+import Isoforms from './components/Isoforms'
+import LongReadQC from './components/LongReadQC'
 import Enrichment from './components/Enrichment'
 import Methods from './components/Methods'
 import DataSpace from './components/DataSpace'
@@ -32,13 +34,17 @@ const LAB_URL = 'https://jiaenlin.github.io/rnaseq-lab/'
 const SERVICE_URL = 'https://jiaenlin.github.io/rnaseq-service/'
 const CITATION = 'Lin, J. (2026). RNA-seq Studio: a privacy-preserving, client-side interactive explorer for bulk RNA-seq results (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21514152'
 
-type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'overlap' | 'crossblock' | 'enrichment' | 'geneset' | 'methods'
+type Tab = 'overview' | 'expression' | 'volcano' | 'degs' | 'isoforms' | 'overlap' | 'crossblock' | 'enrichment' | 'geneset' | 'methods'
 // Ordered the way results are read: what the dataset is, then the statistics,
 // then the pathway view, then drilling into genes, then writing it up.
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'degs', label: 'DEG table' },
   { id: 'volcano', label: 'Volcano' },
+  // Only on a bundle with a transcript layer — see `visibleTabs`. Beside the
+  // single-comparison views because it asks the same comparison one level down:
+  // not how much of the gene, but which isoform of it.
+  { id: 'isoforms', label: 'Isoforms' },
   // Between the single-comparison views and the pathway view, because that is
   // where the question arises: you have read one gene list and want to know
   // what it shares with the next one.
@@ -269,9 +275,13 @@ export default function App() {
   const crossBlockReady = useMemo(
     () => !!bundle?.meta.block_factor && matchedAcrossBlocks(bundle).size > 0,
     [bundle])
+  /** A transcript layer, actually loaded — not merely declared in meta.json. */
+  const isoformReady = !!bundle?.transcripts?.length && !!bundle?.dtuByContrast
   const visibleTabs = useMemo(
-    () => TABS.filter(t => t.id !== 'crossblock' || crossBlockReady),
-    [crossBlockReady])
+    () => TABS.filter(t =>
+      (t.id !== 'crossblock' || crossBlockReady) &&
+      (t.id !== 'isoforms' || isoformReady)),
+    [crossBlockReady, isoformReady])
 
   /* Every differential-expression table this session can put in a Venn: the
    * ones the pipeline exported and the ones DESeq2 was run for here.
@@ -562,7 +572,14 @@ export default function App() {
         )}
         {!loading && bundle && contrast && (
           <ErrorBoundary key={tab}>
-            {tab === 'overview' && <Overview bundle={viewBundle!} sel={sel} onSel={pickSel} />}
+            {tab === 'overview' && (
+              <div className="space-y-4">
+                <Overview bundle={viewBundle!} sel={sel} onSel={pickSel} />
+                {/* Renders itself away when the bundle carries no long-read QC,
+                    which is every short-read bundle. */}
+                <LongReadQC bundle={viewBundle!} />
+              </div>
+            )}
             {/* Expression needs no statistics, so it stays available while a pair
                 is uncomputed; its DEG-derived panels hide themselves. */}
             {tab === 'expression' && (
@@ -575,6 +592,12 @@ export default function App() {
                 not the one selected above, so a pair still waiting on DESeq2
                 must not blank it. */}
             {tab === 'crossblock' && <CrossBlock bundle={viewBundle!} />}
+            {/* Nor is Isoforms. Its usage table comes from the bundle and is
+                never recomputed here — this app fits DESeq2 and nothing else —
+                so a pair still waiting on a gene-level fit must not blank it. */}
+            {tab === 'isoforms' && (
+              <Isoforms bundle={viewBundle!} contrastId={contrast.id} onGene={pickGene} />
+            )}
             {tab === 'overlap' && (
               <Overlap sources={overlapCatalog} canCompute={!!bundle.rawCounts}
                 library={library} onEnrich={enrichQuery} onSelectGene={pickGene} />
@@ -592,6 +615,7 @@ export default function App() {
                 onSelectGene={pickGene} />
             )}
             {tab !== 'overview' && tab !== 'expression' && tab !== 'overlap' && tab !== 'crossblock'
+              && tab !== 'isoforms'
               && !(tab === 'enrichment' && geneQuery) && pending && (
               <NeedsStats
                 contrast={contrast} canCompute={!!bundle.rawCounts} running={myRun.running}

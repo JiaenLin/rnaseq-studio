@@ -2,6 +2,7 @@ import Papa from 'papaparse'
 import { unzipSync } from 'fflate'
 import type {
   Bundle, BundleMeta, SampleRow, DEGRow, EnrichmentRow, CountsMatrix, GeneSetDef,
+  TranscriptRow, DTURow,
 } from '../types'
 
 // A Reader resolves a file name within a bundle to its text, or null if absent.
@@ -138,7 +139,78 @@ export async function assemble(read: Reader): Promise<Bundle> {
     if (list.length) genesets = list
   }
 
-  return { meta, samples, counts, rawCounts, degByContrast, enrichmentByContrast, genesets }
+  // ── The isoform layer ────────────────────────────────────────────────────
+  // Read only when meta.json declares it. Every read is tolerant: a bundle
+  // whose transcript files are missing degrades to the gene layer it always
+  // was, rather than failing to open at all.
+  let transcripts: TranscriptRow[] | undefined
+  let transcriptCounts: CountsMatrix | undefined
+  let dteByContrast: Record<string, DEGRow[]> | undefined
+  let dtuByContrast: Record<string, DTURow[]> | undefined
+
+  const layer = meta.transcript_layer
+  if (layer) {
+    const txText = await read(layer.annotation || 'transcripts.csv')
+    if (txText) {
+      transcripts = Papa.parse<Record<string, string>>(
+        txText.trim(), { header: true, skipEmptyLines: true }).data
+        .filter(r => r.transcript_id)
+        .map(r => ({
+          transcript_id: r.transcript_id,
+          gene_id: r.gene_id || '',
+          gene_name: r.gene_name || '',
+          transcript_name: r.transcript_name || '',
+          // A bundle written before display_name existed still opens; the
+          // accession is the honest fallback, never a blank cell.
+          display_name: r.display_name || r.transcript_name || r.transcript_id,
+          structural_category: r.structural_category || '',
+          novel: /^(true|t|yes|1)$/i.test(r.novel ?? ''),
+        }))
+    }
+    const tcText = await read(layer.counts || 'transcript_counts.csv')
+    if (tcText) transcriptCounts = buildCounts(tcText)
+
+    for (const c of meta.contrasts) {
+      const dteFile = layer.dte_files?.[c.id]
+      if (dteFile) {
+        const t = await read(dteFile)
+        // A transcript DESeq2 table is a DEG table keyed by transcript_id.
+        // Renamed to gene_id here so every existing table/plot helper reads it
+        // unchanged — the id itself is never altered.
+        if (t) (dteByContrast ??= {})[c.id] = coerceDeg(parseCsv<DEGRow>(
+          t.replace(/^transcript_id/, 'gene_id')))
+      }
+      const dtuFile = layer.dtu_files?.[c.id]
+      if (dtuFile) {
+        const t = await read(dtuFile)
+        if (t) (dtuByContrast ??= {})[c.id] = parseCsv<Record<string, string>>(t)
+          .filter(r => r.transcript_id)
+          .map(r => ({
+            transcript_id: r.transcript_id,
+            gene_id: r.gene_id || '',
+            usage_log2FC: num(r.usage_log2FC),
+            pvalue: num(r.pvalue),
+            padj: num(r.padj),
+            gene_padj: num(r.gene_padj),
+            mean_usage_num: num(r.mean_usage_num),
+            mean_usage_den: num(r.mean_usage_den),
+          }))
+      }
+    }
+  }
+
+  return {
+    meta, samples, counts, rawCounts, degByContrast, enrichmentByContrast, genesets,
+    transcripts, transcriptCounts, dteByContrast, dtuByContrast,
+  }
+}
+
+/** '', 'NA' and 'NaN' are missing, not zero. A padj of 0 is a real result. */
+const num = (v: string | undefined): number | null => {
+  const t = (v ?? '').trim()
+  if (t === '' || t === 'NA' || t === 'NaN' || t === 'null') return null
+  const n = Number(t)
+  return Number.isFinite(n) ? n : null
 }
 
 // Load a bundle served under a base URL (e.g. the bundled sample, or a hosted dir).
