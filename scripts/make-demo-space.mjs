@@ -1,4 +1,4 @@
-// Builds a LOCAL data space: five simulated bundles in public/datasets/ and the
+// Builds a LOCAL data space: six simulated bundles in public/datasets/ and the
 // public/catalogue.json that lists them.
 //
 //   node scripts/make-demo-space.mjs        # or: npm run demo:space
@@ -84,6 +84,22 @@ const DATASETS = [
       KO_Cold: { OXIDATIVE_PHOSPHORYLATION: -0.5, FATTY_ACID_METABOLISM: -0.4, INFLAMMATORY_RESPONSE: 1.4, TNFA_SIGNALING_VIA_NFKB: 1.3 },
     },
     published: '2026-08-14',
+  },
+  {
+    // The one LONG-READ dataset, and the only way the Isoforms tab is
+    // discoverable without a bundle of your own. Everything the tab needs is
+    // simulated here: a transcript layer, per-isoform usage, and library
+    // composition. See `longRead` in build().
+    slug: 'heart-ageing-isoforms', species: 'mouse', reps: 3, nGenes: 16800,
+    title: 'Heart, ageing — long reads',
+    description: 'Nanopore direct RNA. Some genes keep their total and swap which isoform carries it — that is what the Isoforms tab is for, and no gene-level table can show it.',
+    conditions: ['Young', 'Aged'],
+    contrasts: [['Aged', 'Young']],
+    signature: {
+      Aged: { INFLAMMATORY_RESPONSE: 1.2, TNFA_SIGNALING_VIA_NFKB: 1.0, OXIDATIVE_PHOSPHORYLATION: -0.7, MYOGENESIS: -0.5 },
+    },
+    longRead: true,
+    published: '2026-09-09',
   },
   {
     slug: 'liver-hfd-timecourse', species: 'mouse', reps: 3, nGenes: 17900,
@@ -238,11 +254,16 @@ function build(spec) {
     return { id, numerator: num, denominator: den, label: `${num} vs ${den}`, deg_file: `deg_${id}.csv`, n_deg: nDeg, padj_threshold: 0.05, lfc_threshold: 1 }
   })
 
+  const extra = spec.longRead
+    ? longReadLayer(spec, files, genes, nameOf, norm, samples, contrasts, rnd, gauss)
+    : {}
+
   files['meta.json'] = JSON.stringify({
-    schema: 1, project: spec.title, species: spec.species, created: spec.published,
+    schema: spec.longRead ? 2 : 1,
+    project: spec.title, species: spec.species, created: spec.published,
     engine: 'desktop-R', control: spec.conditions[0], conditions: spec.conditions,
     gene_id_type: 'ensembl', counts_unit: 'DESeq2 normalized (median-of-ratios)',
-    n_genes: spec.nGenes, n_samples: samples.length, contrasts,
+    n_genes: spec.nGenes, n_samples: samples.length, contrasts, ...extra,
   }, null, 2)
 
   const zip = zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)])), { level: 6 })
@@ -253,6 +274,119 @@ function build(spec) {
     bytes: zip.length, samples: samples.length, genes: spec.nGenes,
     conditions: spec.conditions, contrasts: contrasts.map(c => c.label),
     source: 'Simulated demo', published: spec.published,
+    ...(spec.longRead ? { platform: 'long-read' } : {}),
+  }
+}
+
+/**
+ * A simulated isoform layer: transcripts, per-isoform usage, and composition.
+ *
+ * The point of the dataset is the SWITCH — a gene whose total does not move
+ * while the isoform carrying it changes — because that is the finding long
+ * reads exist for and the one thing no gene-level table can show. So switches
+ * are planted deliberately rather than left to chance, in genes whose
+ * gene-level fold change is near zero.
+ *
+ * Usage statistics in a real bundle come from DEXSeq, run by the pipeline. This
+ * is a demo, so they are drawn — and `dtu_engine` says so, in as many words, to
+ * keep the catalogue honest about which numbers are invented.
+ */
+function longReadLayer(spec, files, genes, nameOf, norm, samples, contrasts, rnd, gauss) {
+  const [num, den] = [spec.contrasts[0][0], spec.contrasts[0][1]]
+  const cid = contrasts[0].id
+  const isN = samples.map(s => s.group === num)
+
+  // Two or three isoforms for the first 2,600 genes; one for the rest, which is
+  // roughly what an annotation looks like.
+  const tx = []
+  for (let gi = 0; gi < genes.length; gi++) {
+    const n = gi < 900 ? 3 : gi < 2600 ? 2 : 1
+    for (let k = 0; k < n; k++) {
+      const novel = n > 1 && k === n - 1 && rnd() < 0.06
+      tx.push({
+        gi, k,
+        id: novel ? `BambuTx${tx.length}` : `ENSMUST${String(gi * 7 + k).padStart(11, '0')}`,
+        name: novel ? '' : `${nameOf(gi)}-2${String(k + 1).padStart(2, '0')}`,
+        novel,
+        cat: novel ? (rnd() < 0.5 ? 'novel_in_catalog' : 'novel_not_in_catalog') : 'full-splice_match',
+      })
+    }
+  }
+  // Switches: 40 multi-isoform genes whose gene-level effect is small.
+  const switchGenes = new Set()
+  for (let gi = 0; gi < 2600 && switchGenes.size < 40; gi++) {
+    if (Math.abs(norm[gi][0] - norm[gi][samples.length - 1]) < 40) switchGenes.add(gi)
+  }
+
+  const novelSeen = new Map()
+  const txRows = [], txCounts = [], dtuRows = [], dteRows = []
+  for (const t of tx) {
+    const sibs = tx.filter(x => x.gi === t.gi)
+    const base = 1 / sibs.length
+    const sw = switchGenes.has(t.gi) && sibs.length > 1
+    // In a switch the first isoform hands its share to the second.
+    const uDen = sw ? (t.k === 0 ? 0.82 : t.k === 1 ? 0.14 : 0.04) : base
+    const uNum = sw ? (t.k === 0 ? 0.11 : t.k === 1 ? 0.85 : 0.04) : base
+    let display = t.name
+    if (!display) {
+      const c = (novelSeen.get(t.gi) ?? 0) + 1; novelSeen.set(t.gi, c)
+      display = `${nameOf(t.gi)}-novel-${c}`
+    }
+    txRows.push([t.id, genes[t.gi][0], nameOf(t.gi), t.name, display, t.cat,
+      t.novel ? 'TRUE' : 'FALSE'].join(','))
+    txCounts.push([t.id, display,
+      ...norm[t.gi].map((v, si) => Math.round(v * (isN[si] ? uNum : uDen)))].join(','))
+    if (sibs.length > 1) {
+      const p = sw ? Math.max(1e-30, 10 ** (-8 - rnd() * 12)) : Math.min(1, 0.15 + rnd() * 0.85)
+      dtuRows.push([t.id, genes[t.gi][0],
+        (Math.log2((uNum + 1e-3) / (uDen + 1e-3))).toFixed(4),
+        p.toExponential(3), Math.min(1, p * 8).toExponential(3),
+        Math.min(1, p * 8).toExponential(3),
+        uNum.toFixed(6), uDen.toFixed(6)].join(','))
+    }
+    const lfc = gauss() * 0.4 + (sw ? (t.k === 1 ? 1.6 : -1.6) : 0)
+    const se = 0.25 + rnd() * 0.2
+    const p = Math.max(1e-300, Math.min(1, tailP(lfc / se)))
+    dteRows.push([t.id, (norm[t.gi][0] || 1).toFixed(2), lfc.toFixed(4), se.toFixed(4),
+      p.toExponential(3), Math.min(1, p * 6).toExponential(3)].join(','))
+  }
+
+  files['transcripts.csv'] = csv(
+    ['transcript_id', 'gene_id', 'gene_name', 'transcript_name', 'display_name',
+      'structural_category', 'novel'], txRows)
+  files['transcript_counts.csv'] = csv(
+    ['transcript_id', 'display_name', ...samples.map(s => s.sample)], txCounts)
+  files[`dtu_${cid}.csv`] = csv(
+    ['transcript_id', 'gene_id', 'usage_effect', 'pvalue', 'padj', 'gene_padj',
+      'mean_usage_num', 'mean_usage_den'], dtuRows)
+  files[`dte_${cid}.csv`] = csv(
+    ['transcript_id', 'baseMean', 'log2FoldChange', 'lfcSE', 'pvalue', 'padj'], dteRows)
+
+  return {
+    platform: 'long-read',
+    transcript_layer: {
+      annotation: 'transcripts.csv', counts: 'transcript_counts.csv',
+      n_transcripts: tx.length, n_novel: tx.filter(t => t.novel).length,
+      dte_files: { [cid]: `dte_${cid}.csv` },
+      dtu_files: { [cid]: `dtu_${cid}.csv` },
+      dtu_engine: 'simulated for this demo — a real bundle carries DEXSeq',
+      dtu_effect_scale: 'log2 fold change of isoform usage',
+      category_vocabulary: 'sqanti',
+      dtu_filter: 'total counts >= 10 and >= 3 counts in >= 2 samples',
+    },
+    longread_qc: samples.map((s, i) => ({
+      sample: s.sample,
+      total_reads: Math.round(9e6 + rnd() * 7e6),
+      unmapped_pct: +(6 + rnd() * 5).toFixed(1),
+      mt_pct: +(22 + rnd() * 14).toFixed(1),
+      rrna_pct: +(1 + rnd() * 2).toFixed(1),
+      nuclear_alignments: Math.round(6e6 + rnd() * 4e6),
+      median_read_length: Math.round(900 + rnd() * 500),
+      read_n50: Math.round(1500 + rnd() * 700),
+      median_polya: Math.round(60 + rnd() * 50),
+      polya_called_pct: +(80 + rnd() * 12).toFixed(1),
+      transcripts_detected: Math.round(tx.length * (0.55 + rnd() * 0.2)),
+    })),
   }
 }
 
