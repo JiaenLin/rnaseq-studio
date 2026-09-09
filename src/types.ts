@@ -167,6 +167,15 @@ export interface LongReadQC {
   median_read_length?: number | null
   read_n50?: number | null
   median_polya?: number | null
+  /**
+   * Share of reads a poly(A) tail was actually CALLED on.
+   *
+   * Reported beside the median because the median alone cannot tell short tails
+   * from mostly-no-tail. dorado writes `pt:i:0` when it finds no tail, and on
+   * ONT direct-RNA data a quarter of reads can be 0 — counting those as
+   * zero-length measurements puts the median of the real tails at ~10 nt.
+   */
+  polya_called_pct?: number | null
   transcripts_detected?: number | null
 }
 

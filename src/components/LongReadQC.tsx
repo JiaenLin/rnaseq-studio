@@ -24,6 +24,7 @@ export default function LongReadQC({ bundle }: { bundle: Bundle }) {
 
   const cond = new Map(bundle.samples.map(s => [s.sample, s.condition]))
   const anyPolya = qc.some(q => q.median_polya != null)
+  const anyCalled = qc.some(q => q.polya_called_pct != null)
   const anyLen = qc.some(q => q.median_read_length != null)
 
   return (
@@ -32,6 +33,8 @@ export default function LongReadQC({ bundle }: { bundle: Bundle }) {
       <p className="mt-1 text-xs text-slate-500">
         Measured from the alignments. Shown so you can weigh it — nothing in this app
         filters or flags a sample on these numbers.
+        {anyCalled && <> <b>Median poly(A)</b> is over the reads a tail was called on;
+        <b> tail called</b> is what share that was.</>}
       </p>
 
       <div className="mt-4 space-y-1.5">
@@ -78,6 +81,7 @@ export default function LongReadQC({ bundle }: { bundle: Bundle }) {
               <th className="py-1.5 pr-3 text-right font-medium">rRNA</th>
               {anyLen && <th className="py-1.5 pr-3 text-right font-medium">Median length</th>}
               {anyPolya && <th className="py-1.5 pr-3 text-right font-medium">Median poly(A)</th>}
+              {anyCalled && <th className="py-1.5 pr-3 text-right font-medium">Tail called</th>}
               <th className="py-1.5 text-right font-medium">Transcripts</th>
             </tr>
           </thead>
@@ -91,6 +95,7 @@ export default function LongReadQC({ bundle }: { bundle: Bundle }) {
                 <td className="py-1.5 pr-3 text-right">{p1(q.rrna_pct)}</td>
                 {anyLen && <td className="py-1.5 pr-3 text-right">{n0(q.median_read_length)} nt</td>}
                 {anyPolya && <td className="py-1.5 pr-3 text-right">{n0(q.median_polya)} nt</td>}
+                {anyCalled && <td className="py-1.5 pr-3 text-right">{p1(q.polya_called_pct)}</td>}
                 <td className="py-1.5 text-right">{n0(q.transcripts_detected)}</td>
               </tr>
             ))}
