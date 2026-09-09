@@ -188,7 +188,8 @@ export async function assemble(read: Reader): Promise<Bundle> {
           .map(r => ({
             transcript_id: r.transcript_id,
             gene_id: r.gene_id || '',
-            usage_log2FC: num(r.usage_log2FC),
+            // `usage_log2FC` is the pre-satuRn column name; read either.
+            usage_effect: num(r.usage_effect ?? r.usage_log2FC),
             pvalue: num(r.pvalue),
             padj: num(r.padj),
             gene_padj: num(r.gene_padj),

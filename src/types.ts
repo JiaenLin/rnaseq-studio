@@ -110,6 +110,8 @@ export interface TranscriptLayer {
   /** Named because a different engine's numbers are not comparable. */
   dtu_engine?: string
   dtu_filter?: string
+  /** What `usage_effect` is measured in. See `DTURow.usage_effect`. */
+  dtu_effect_scale?: string
   /**
    * Which vocabulary `structural_category` in transcripts.csv speaks.
    *
@@ -145,8 +147,15 @@ export interface TranscriptRow {
 export interface DTURow {
   transcript_id: string
   gene_id: string
-  /** Change in this isoform's SHARE of its gene, not in its absolute level. */
-  usage_log2FC: number | null
+  /**
+   * Change in this isoform's SHARE of its gene, not in its absolute level.
+   *
+   * The SCALE depends on the engine and is named in
+   * `transcript_layer.dtu_effect_scale` — satuRn's is a change in log odds of
+   * usage, which is not a log2 fold change. Nothing here converts it, and it is
+   * used only to rank isoforms within a gene, where any monotone scale agrees.
+   */
+  usage_effect: number | null
   pvalue: number | null
   padj: number | null
   /** The gene's own q-value across all its isoforms. */

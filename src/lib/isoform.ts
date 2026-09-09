@@ -81,7 +81,7 @@ export function isoformGenes(
   let out = [...byGene.values()].filter(g => g.moved.length > 0)
   if (switchOnly) out = out.filter(g => g.genePadj != null && g.genePadj >= alpha)
   for (const g of out) {
-    g.moved.sort((a, b) => Math.abs(b.row.usage_log2FC ?? 0) - Math.abs(a.row.usage_log2FC ?? 0))
+    g.moved.sort((a, b) => Math.abs(b.row.usage_effect ?? 0) - Math.abs(a.row.usage_effect ?? 0))
   }
   return out.sort((a, b) => (a.dtuPadj ?? 1) - (b.dtuPadj ?? 1))
 }

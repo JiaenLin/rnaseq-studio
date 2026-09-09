@@ -54,7 +54,7 @@ const LONG = {
   // G1: usage flips, gene total flat (padj 1e-7 on G1 is a CHANGED gene, so it
   // is NOT a switch). G2: usage moves, gene flat -> the switch.
   'dtu_KO_vs_WT.csv':
-    'transcript_id,gene_id,usage_log2FC,pvalue,padj,gene_padj,mean_usage_num,mean_usage_den\n' +
+    'transcript_id,gene_id,usage_effect,pvalue,padj,gene_padj,mean_usage_num,mean_usage_den\n' +
     'T1,G1,-3.2,1e-9,1e-8,1e-8,0.07,0.90\n' +
     'T2,G1,3.2,1e-9,1e-8,1e-8,0.93,0.10\n' +
     'T3,G2,1.1,1e-4,1e-3,1e-3,0.80,0.40\n',
@@ -113,6 +113,19 @@ console.log('\nONE GENE')
 }
 check('category tally', categoryTally(b.transcripts),
   [{ name: 'full-splice_match', n: 2 }, { name: 'novel_in_catalog', n: 1 }])
+
+console.log('\nTHE PRE-satuRn COLUMN NAME STILL READS')
+{
+  // Bundles written while the engine was DEXSeq carry `usage_log2FC`. They must
+  // keep opening: the column was renamed because satuRn's effect is log-odds and
+  // not a fold change, which is a labelling fix, not a data change.
+  const old = { ...LONG, 'dtu_KO_vs_WT.csv':
+    'transcript_id,gene_id,usage_log2FC,pvalue,padj,gene_padj,mean_usage_num,mean_usage_den\n' +
+    'T3,G2,1.1,1e-4,1e-3,1e-3,0.80,0.40\n' }
+  const bo = await assemble(reader(old))
+  check('an old usage_log2FC column is read as usage_effect',
+    bo.dtuByContrast.KO_vs_WT[0].usage_effect, 1.1)
+}
 
 console.log('\nMISSING PIECES DEGRADE, THEY DO NOT THROW')
 {
