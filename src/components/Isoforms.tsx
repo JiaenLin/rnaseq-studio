@@ -55,13 +55,29 @@ export default function Isoforms(
 
   if (!bundle.transcripts || !bundle.dtuByContrast?.[contrastId]) {
     return (
-      <div className="card p-6">
-        <h2 className="text-base font-semibold">Isoforms</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          This bundle carries an isoform layer, but no usage table for{' '}
-          <b>{contrast?.label ?? contrastId}</b>. Usage is a two-group test, so an
-          interaction coefficient has none — pick a pairwise comparison.
-        </p>
+      <div className="space-y-4">
+        <div className="card p-5">
+          <h2 className="text-base font-semibold">Isoforms</h2>
+          {bundle.transcripts && (
+            <p className="mt-1 text-sm text-slate-500">
+              {bundle.transcripts.length.toLocaleString()} transcripts ·{' '}
+              {bundle.transcripts.filter(t => t.novel).length.toLocaleString()} novel.
+              Transcript-level expression is on the DEG table and the volcano; this tab
+              needs a usage test.
+            </p>
+          )}
+          <p className="mt-2 text-sm text-slate-500">
+            No <b>differential transcript usage</b> table for{' '}
+            <b>{contrast?.label ?? contrastId}</b>. Usage is a two-group test, so an
+            interaction coefficient has none — if this is one, pick a pairwise comparison.
+          </p>
+          <p className="mt-2 text-sm text-slate-500">
+            Otherwise the bundle was built without one. DTU is computed by <b>DEXSeq</b> in
+            the pipeline, not in the browser; RNA-seq Lab will carry it into a bundle if you
+            give it the pipeline’s{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-[12px] dark:bg-slate-800">results_dtu_transcript.tsv</code>.
+          </p>
+        </div>
       </div>
     )
   }
@@ -76,8 +92,9 @@ export default function Isoforms(
         <p className="mt-1 text-sm text-slate-500">
           {bundle.transcripts.length.toLocaleString()} transcripts ·{' '}
           {novel.toLocaleString()} novel ({pctOf(novel, bundle.transcripts.length)}) ·{' '}
-          usage tested with <b>{layer?.dtu_engine ?? 'the pipeline’s engine'}</b>
-          {layer?.dtu_filter ? <> keeping {layer.dtu_filter}</> : null}.
+          {layer?.dtu_engine
+            ? <>usage tested with <b>{layer.dtu_engine}</b>.</>
+            : <>no usage test in this bundle.</>}
         </p>
         <p className="mt-2 text-sm text-slate-500">
           <b>{allGenes.length.toLocaleString()}</b> gene{allGenes.length === 1 ? '' : 's'} have an
